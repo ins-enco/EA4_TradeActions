@@ -40,10 +40,37 @@ int COL_W_MILLISECONDS_SINCE_LAST    = 160;
 int COL_W_PRICE_DIFF_FROM_PREVIOUS   = 170;
 int COL_W_PROFIT_SINCE_START         = 130;
 
+string TA_ACTION_OPEN  = "open";
+string TA_ACTION_CLOSE = "close";
+
+struct TradeActionRow
+  {
+   string   openOrClose;
+   string   tradeDirection;
+   double   executionPrice;
+   double   exposure;
+   double   profit;
+   int      ticket;
+   string   symbolName;
+   string   ticketDirection;
+   long     millisecondsSinceLastAction;
+   double   priceDifferenceFromPrevious;
+   double   profitSinceStart;
+   datetime actionTime;
+   long     actionTimeMs;
+   int      ticketType;
+  };
+
 double   g_equityAtAttach = 0.0;
+TradeActionRow g_tradeActions[];
+int      g_tradeActionCount = 0;
 
 void   DrawTable();
 double GetExposure(double currentExposure = 0.0, int orderType = -1, double lots = 0.0);
+string ResolveTradeDirection(int ticketType, bool isCloseAction);
+string ResolveTicketDirection(int ticketType);
+void   ResetTradeActionStorage();
+void   AppendTradeAction(const TradeActionRow &action);
 void   ClearTable();
 void   CreateRectangle(string name, int x, int y, int width, int height, color bgColor, color borderColor, int borderWidth = 1);
 void   CreateTableLabel(string name, string text, int x, int y, color textColor, int fontSize, ENUM_ANCHOR_POINT anchor);
@@ -70,6 +97,7 @@ string GetCellValue(int columnIndex,
 int OnInit()
   {
    g_equityAtAttach = AccountEquity();
+   ResetTradeActionStorage();
    DrawTable();
    return(INIT_SUCCEEDED);
   }
@@ -79,6 +107,7 @@ int OnInit()
 //+------------------------------------------------------------------+
 void OnDeinit(const int reason)
   {
+   ResetTradeActionStorage();
    ClearTable();
   }
 
@@ -130,8 +159,8 @@ void DrawTable()
 
       runningExposure = GetExposure(runningExposure, type, OrderLots());
 
-      string direction = (type == OP_BUY) ? "buy" : "sell";
-      string ticketDirection = (type == OP_BUY) ? "BUY" : "SELL";
+      string direction = ResolveTradeDirection(type, false);
+      string ticketDirection = ResolveTicketDirection(type);
       long currentActionTimeMs = (long)OrderOpenTime() * 1000;
 
       long millisecondsSinceLastAction = 0;
@@ -142,7 +171,7 @@ void DrawTable()
       if(displayedRows > 0)
          priceDifferenceFromPrevious = OrderOpenPrice() - previousActionPrice;
 
-      rowOpenOrClose[displayedRows] = "open";
+      rowOpenOrClose[displayedRows] = TA_ACTION_OPEN;
       rowDirection[displayedRows] = direction;
       rowExecutionPrice[displayedRows] = DoubleToString(OrderOpenPrice(), Digits);
       rowExposure[displayedRows] = DoubleToString(runningExposure, 2);
@@ -249,6 +278,53 @@ void DrawTable()
             CreateTableLabel("TA_Cell_" + IntegerToString(row + 1) + "_" + IntegerToString(col + 1), text, colStart + 4, rowY + 3, InpTextColor, TA_FONT_SIZE, ANCHOR_LEFT_UPPER);
         }
      }
+  }
+
+//+------------------------------------------------------------------+
+//| Canonical direction mapping for trade actions                    |
+//+------------------------------------------------------------------+
+string ResolveTradeDirection(int ticketType, bool isCloseAction)
+  {
+   if(ticketType == OP_BUY)
+      return(isCloseAction ? "sell" : "buy");
+
+   if(ticketType == OP_SELL)
+      return(isCloseAction ? "buy" : "sell");
+
+   return("");
+  }
+
+//+------------------------------------------------------------------+
+//| Ticket direction text helper                                     |
+//+------------------------------------------------------------------+
+string ResolveTicketDirection(int ticketType)
+  {
+   if(ticketType == OP_BUY)
+      return("BUY");
+
+   if(ticketType == OP_SELL)
+      return("SELL");
+
+   return("");
+  }
+
+//+------------------------------------------------------------------+
+//| TradeAction storage helpers                                      |
+//+------------------------------------------------------------------+
+void ResetTradeActionStorage()
+  {
+   ArrayResize(g_tradeActions, 0);
+   g_tradeActionCount = 0;
+  }
+
+void AppendTradeAction(const TradeActionRow &action)
+  {
+   int newSize = ArraySize(g_tradeActions) + 1;
+   if(ArrayResize(g_tradeActions, newSize) != newSize)
+      return;
+
+   g_tradeActions[newSize - 1] = action;
+   g_tradeActionCount = newSize;
   }
 
 //+------------------------------------------------------------------+
