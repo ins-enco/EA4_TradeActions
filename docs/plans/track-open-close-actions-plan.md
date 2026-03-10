@@ -15,6 +15,50 @@ This plan introduces a stable event-tracking layer, then updates rendering to sh
 2. The table continues to focus on the current chart symbol (`OrderSymbol() == Symbol()`).
 3. `MODE_HISTORY` contains closed trade details needed for close action enrichment on subsequent ticks.
 
+## Open And Close Trade Actions In Chart Table: Column Formula Contract
+This section aligns table formulas with `update-trade-data-async-trade-ticket-action.md` sections **2) Open/Close Detection Logic** and **3) TradeTicketAction Field Calculation**.
+
+1. Action row creation gate (per ticket):
+   - If ticket is first seen and is open: append one `open` action row.
+   - If ticket was tracked as open and is now closed: append one `close` action row.
+   - If ticket is first seen but already closed: append nothing.
+   - If ticket remains open without state transition: append nothing.
+
+2. Column formulas for each appended action row:
+   - `OpenOrClose`:
+     - `open` for first-seen open ticket.
+     - `close` for tracked open -> closed transition.
+   - `TradeDirection`:
+     - `open`: same as ticket type.
+     - `close`: opposite of ticket type (`close buy -> sell`, `close sell -> buy`).
+   - `ExecutionPrice`:
+     - `open`: ticket open price.
+     - `close`: ticket close price from `MODE_HISTORY`.
+   - `Exposure`:
+     - `signedLots = +lots` when `TradeDirection=buy`, otherwise `-lots`.
+     - `Exposure = Round(previousExposure + signedLots, 10)` where `previousExposure` defaults to `0`.
+   - `Profit`:
+     - `open`: `0` (no realized profit at open event time).
+     - `close`: realized net profit from history (`OrderProfit + OrderSwap + OrderCommission`).
+   - `Ticket`:
+     - `OrderTicket()`.
+   - `Symbol Name`:
+     - `OrderSymbol()`.
+   - `Ticket Direction`:
+     - `BUY` when ticket type is buy, otherwise `SELL`.
+   - `MillisecondsSinceLastAction`:
+     - If prior symbol action exists: `(currentActionTime - previousActionTime).TotalMilliseconds`.
+     - Else: `0`.
+   - `PriceDifferenceFromPrevious`:
+     - Initialize to `double.NegativeInfinity`.
+     - Recompute only when prior symbol action exists, `Abs(previousExposure) > 0.000001`, and action direction changed.
+     - If `buy` after previous `sell`: `Round(previousPrice - currentPrice, 10)`.
+     - If `sell` after previous `buy`: `Round(currentPrice - previousPrice, 10)`.
+   - `ProfitSinceStart`:
+     - Initialize with `previousProfitSinceStart` (default `0`).
+     - If `PriceDifferenceFromPrevious` is recomputed: `Round(previousProfitSinceStart + PriceDifferenceFromPrevious, 10)`.
+     - If direction does not change: keep previous value unchanged.
+
 ## Sprint 1: Define Action Model And Runtime State
 **Goal**: Create a data model for action rows and runtime snapshots for ticket tracking.
 **Demo/Validation**:
@@ -105,17 +149,19 @@ This plan introduces a stable event-tracking layer, then updates rendering to sh
 ### Task 2.3: Recalculate derived metrics on action sequence
 - **Location**:
   - `TradeAction.mq4`
-- **Description**: Compute `Exposure`, `MillisecondsSinceLastAction`, `PriceDifferenceFromPrevious`, and `ProfitSinceStart` from ordered action rows rather than only current open orders.
+- **Description**: Compute `Exposure`, `MillisecondsSinceLastAction`, `PriceDifferenceFromPrevious`, `Profit`, and `ProfitSinceStart` from ordered action rows using per-symbol last-action state and direction-change rules.
 - **Dependencies**:
   - `Task 2.2`
 - **Complexity**: 7
 - **Acceptance criteria**:
-  - Exposure changes with action direction and returns toward zero on opposite close actions.
-  - Milliseconds and price-difference columns compare against the previous action row in display order.
-  - ProfitSinceStart remains equity-based from EA attach and updates each tick.
+  - `Exposure` uses `Round(previousExposure + signedLots, 10)` with signed lots derived from `TradeDirection`.
+  - `MillisecondsSinceLastAction` is `0` for first action per symbol and delta-to-previous for subsequent actions.
+  - `PriceDifferenceFromPrevious` only recalculates when action direction flips and prior exposure is non-zero; otherwise remains `double.NegativeInfinity`.
+  - `ProfitSinceStart` is cumulative by action sequence (`previous + priceDifference` when recalculated), not equity snapshot delta.
+  - `Profit` is `0` at open actions and realized net profit at close actions from history records.
 - **Validation**:
-  - Execute open/close sequence and verify exposure progression is logically consistent.
-  - Verify time and price delta columns change only when a new action row is added.
+  - Execute sequence `open buy -> close buy -> open sell -> close sell` and verify formula outputs match the column contract.
+  - Verify same-direction consecutive actions do not change `PriceDifferenceFromPrevious` or `ProfitSinceStart`.
 
 ## Sprint 3: Render Stable Action Table And Verify Scenarios
 **Goal**: Drive table rendering from action log and validate expected behavior for all four action types.
