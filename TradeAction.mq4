@@ -27,12 +27,11 @@ int    TA_FONT_SIZE      = 9;
 string TA_FONT_NAME      = "Tahoma";
 
 // Column widths (pixels)
-int COL_COUNT                        = 11;
+int COL_COUNT                        = 10;
 int COL_W_OPEN_CLOSE                 = 95;
 int COL_W_DIRECTION                  = 95;
 int COL_W_EXEC_PRICE                 = 95;
 int COL_W_EXPOSURE                   = 80;
-int COL_W_PROFIT                     = 80;
 int COL_W_TICKET                     = 90;
 int COL_W_SYMBOL_NAME                = 95;
 int COL_W_TICKET_DIRECTION           = 110;
@@ -134,7 +133,6 @@ string GetCellValue(int columnIndex,
                     string direction,
                     string execPrice,
                     string exposure,
-                    string profit,
                     string ticket,
                     string symbolName,
                     string ticketDirection,
@@ -189,7 +187,6 @@ void DrawTable()
    string rowDirection[10];
    string rowExecutionPrice[10];
    string rowExposure[10];
-   string rowProfit[10];
    string rowTicket[10];
    string rowSymbolName[10];
    string rowTicketDirection[10];
@@ -209,7 +206,6 @@ void DrawTable()
       rowDirection[displayedRows] = action.tradeDirection;
       rowExecutionPrice[displayedRows] = DoubleToString(action.executionPrice, Digits);
       rowExposure[displayedRows] = DoubleToString(action.exposure, 2);
-      rowProfit[displayedRows] = DoubleToString(action.profit, 2);
       rowTicket[displayedRows] = IntegerToString(action.ticket);
       rowSymbolName[displayedRows] = action.symbolName;
       rowTicketDirection[displayedRows] = action.ticketDirection;
@@ -292,7 +288,6 @@ void DrawTable()
                              rowDirection[row],
                              rowExecutionPrice[row],
                              rowExposure[row],
-                             rowProfit[row],
                              rowTicket[row],
                              rowSymbolName[row],
                              rowTicketDirection[row],
@@ -302,7 +297,7 @@ void DrawTable()
          int colStart = GetColumnStartX(panelLeft, col);
          int colWidth = GetColumnWidth(col);
 
-         bool rightAlign = (col == 2 || col == 3 || col == 4 || col == 5 || col == 8 || col == 9 || col == 10);
+         bool rightAlign = (col == 0 || col == 5 || col == 6 || col == 7 || col == 8 || col == 9);
          if(rightAlign)
             CreateTableLabel("TA_Cell_" + IntegerToString(row + 1) + "_" + IntegerToString(col + 1), text, colStart + colWidth - 4, rowY + 3, InpTextColor, TA_FONT_SIZE, ANCHOR_RIGHT_UPPER);
          else
@@ -1080,17 +1075,16 @@ int GetColumnWidth(int columnIndex)
   {
    switch(columnIndex)
      {
-      case 0: return(COL_W_OPEN_CLOSE);
-      case 1: return(COL_W_DIRECTION);
-      case 2: return(COL_W_EXEC_PRICE);
-      case 3: return(COL_W_EXPOSURE);
-      case 4: return(COL_W_PROFIT);
-      case 5: return(COL_W_TICKET);
-      case 6: return(COL_W_SYMBOL_NAME);
-      case 7: return(COL_W_TICKET_DIRECTION);
-      case 8: return(COL_W_MILLISECONDS_SINCE_LAST);
-      case 9: return(COL_W_PRICE_DIFF_FROM_PREVIOUS);
-      case 10: return(COL_W_PROFIT_SINCE_START);
+      case 0: return(COL_W_TICKET);
+      case 1: return(COL_W_SYMBOL_NAME);
+      case 2: return(COL_W_OPEN_CLOSE);
+      case 3: return(COL_W_DIRECTION);
+      case 4: return(COL_W_TICKET_DIRECTION);
+      case 5: return(COL_W_EXEC_PRICE);
+      case 6: return(COL_W_EXPOSURE);
+      case 7: return(COL_W_MILLISECONDS_SINCE_LAST);
+      case 8: return(COL_W_PRICE_DIFF_FROM_PREVIOUS);
+      case 9: return(COL_W_PROFIT_SINCE_START);
      }
    return(80);
   }
@@ -1102,17 +1096,16 @@ string GetColumnTitle(int columnIndex)
   {
    switch(columnIndex)
      {
-      case 0: return("OpenOrClose");
-      case 1: return("TradeDirection");
-      case 2: return("ExecutionPrice");
-      case 3: return("Exposure");
-      case 4: return("Profit");
-      case 5: return("Ticket");
-      case 6: return("Symbol Name");
-      case 7: return("Ticket Direction");
-      case 8: return("MillisecondsSinceLastAction");
-      case 9: return("PriceDifferenceFromPrevious");
-      case 10: return("ProfitSinceStart");
+      case 0: return("Ticket");
+      case 1: return("SymbolName");
+      case 2: return("OpenOrClose");
+      case 3: return("TradeDirection");
+      case 4: return("TicketDirection");
+      case 5: return("ExecutionPrice");
+      case 6: return("Exposure");
+      case 7: return("MillisecondsSinceLastAction");
+      case 8: return("PriceDifferenceFromPrevious");
+      case 9: return("ProfitSinceStart");
      }
    return("");
   }
@@ -1149,7 +1142,6 @@ string GetCellValue(int columnIndex,
                     string direction,
                     string execPrice,
                     string exposure,
-                    string profit,
                     string ticket,
                     string symbolName,
                     string ticketDirection,
@@ -1159,17 +1151,16 @@ string GetCellValue(int columnIndex,
   {
    switch(columnIndex)
      {
-      case 0: return(openOrClose);
-      case 1: return(direction);
-      case 2: return(execPrice);
-      case 3: return(exposure);
-      case 4: return(profit);
-      case 5: return(ticket);
-      case 6: return(symbolName);
-      case 7: return(ticketDirection);
-      case 8: return(millisecondsSinceLastAction);
-      case 9: return(priceDifferenceFromPrevious);
-      case 10: return(profitSinceStart);
+      case 0: return(ticket);
+      case 1: return(symbolName);
+      case 2: return(openOrClose);
+      case 3: return(direction);
+      case 4: return(ticketDirection);
+      case 5: return(execPrice);
+      case 6: return(exposure);
+      case 7: return(millisecondsSinceLastAction);
+      case 8: return(priceDifferenceFromPrevious);
+      case 9: return(profitSinceStart);
      }
    return("");
   }
