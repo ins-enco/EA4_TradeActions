@@ -45,13 +45,13 @@ string TA_ACTION_CLOSE = "close";
 
 struct TradeActionRow
   {
+   int      ticket;
    string   openOrClose;
+   string   symbolName;
    string   tradeDirection;
    double   executionPrice;
    double   exposure;
    double   profit;
-   int      ticket;
-   string   symbolName;
    string   ticketDirection;
    long     millisecondsSinceLastAction;
    double   priceDifferenceFromPrevious;
