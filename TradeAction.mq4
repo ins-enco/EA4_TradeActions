@@ -28,11 +28,12 @@ int    TA_FONT_SIZE      = 9;
 string TA_FONT_NAME      = "Tahoma";
 
 // Column widths (pixels)
-int COL_COUNT                        = 10;
+int COL_COUNT                        = 11;
 int COL_W_OPEN_CLOSE                 = 95;
 int COL_W_DIRECTION                  = 95;
 int COL_W_EXEC_PRICE                 = 95;
 int COL_W_EXPOSURE                   = 80;
+int COL_W_MEASURED_TIMESTAMP         = 170;
 int COL_W_TICKET                     = 90;
 int COL_W_SYMBOL_NAME                = 95;
 int COL_W_TICKET_DIRECTION           = 110;
@@ -46,7 +47,7 @@ string TA_ACTION_CLOSE = "close";
 int    TA_DERIVED_DECIMALS = 10;
 double TA_EXPOSURE_EPSILON = 0.000001;
 string TA_VALUE_NOT_AVAILABLE = "";
-int    TA_REFRESH_INTERVAL_MS_MIN = 50;
+int    TA_REFRESH_INTERVAL_MS_MIN = 10;
 int    TA_REFRESH_INTERVAL_MS_MAX = 5000;
 int    TA_REFRESH_INTERVAL_MS_DEFAULT = 200;
 
@@ -67,6 +68,9 @@ struct TradeActionRow
    double   profitSinceStart;
    datetime actionTime;
    long     actionTimeMs;
+   bool     hasMeasuredTimestamp;
+   datetime measuredTimestampLocal;
+   long     measuredTimestampMs;
    int      ticketType;
   };
 
@@ -90,6 +94,8 @@ struct TradeActionSymbolState
    double   executionPrice;
    double   exposure;
    double   profitSinceStart;
+   bool     hasMeasuredTimestamp;
+   long     measuredTimestampMs;
   };
 
 TradeActionRow g_tradeActions[];
@@ -111,6 +117,9 @@ bool     g_hasRenderedTable = false;
 
 int    NormalizeRefreshIntervalMs(int requestedIntervalMs);
 int    GetTableChartWidth();
+void   ClearMeasuredTimestamp(TradeActionRow &action);
+void   SetMeasuredTimestampNow(TradeActionRow &action);
+long   GetTradeActionSequenceTimeMs(const TradeActionRow &action);
 string BuildTableRenderState();
 void   ResetTableRenderState();
 bool   StartRefreshTimer();
@@ -162,6 +171,7 @@ bool   HasOpenActionForTicket(int ticket);
 bool   HasCloseActionForTicket(int ticket);
 double GetOpenTicketFloatingProfit(int ticket);
 void   SeedBaselineOpenActions();
+string FormatMeasuredTimestamp(const TradeActionRow &action);
 string FormatPriceDifferenceFromPrevious(const TradeActionRow &action);
 string FormatProfitSinceStart(const TradeActionRow &action);
 void   ClearTable();
@@ -176,6 +186,7 @@ string GetCellValue(int columnIndex,
                     string direction,
                     string execPrice,
                     string exposure,
+                    string measuredTimestamp,
                     string ticket,
                     string symbolName,
                     string ticketDirection,
@@ -207,6 +218,31 @@ int GetTableChartWidth()
    return(chartWidth);
   }
 
+void ClearMeasuredTimestamp(TradeActionRow &action)
+  {
+   action.hasMeasuredTimestamp = false;
+   action.measuredTimestampLocal = 0;
+   action.measuredTimestampMs = 0;
+  }
+
+void SetMeasuredTimestampNow(TradeActionRow &action)
+  {
+   datetime localTime = TimeLocal();
+   long millisecondsPart = (long)(GetTickCount() % 1000);
+
+   action.hasMeasuredTimestamp = true;
+   action.measuredTimestampLocal = localTime;
+   action.measuredTimestampMs = ((long)localTime * 1000) + millisecondsPart;
+  }
+
+long GetTradeActionSequenceTimeMs(const TradeActionRow &action)
+  {
+   if(action.hasMeasuredTimestamp)
+      return(action.measuredTimestampMs);
+
+   return(action.actionTimeMs);
+  }
+
 string BuildTableRenderState()
   {
    int chartWidth = GetTableChartWidth();
@@ -227,6 +263,7 @@ string BuildTableRenderState()
       state += "|" + action.ticketDirection;
       state += "|" + DoubleToString(action.executionPrice, Digits);
       state += "|" + DoubleToString(action.exposure, 2);
+      state += "|" + FormatMeasuredTimestamp(action);
       state += "|" + DoubleToString(action.millisecondsSinceLastAction, 0);
       state += "|" + FormatPriceDifferenceFromPrevious(action);
       state += "|" + FormatProfitSinceStart(action);
@@ -401,6 +438,7 @@ void DrawTable()
    string rowDirection[10];
    string rowExecutionPrice[10];
    string rowExposure[10];
+   string rowMeasuredTimestamp[10];
    string rowTicket[10];
    string rowSymbolName[10];
    string rowTicketDirection[10];
@@ -420,6 +458,7 @@ void DrawTable()
       rowDirection[displayedRows] = action.tradeDirection;
       rowExecutionPrice[displayedRows] = DoubleToString(action.executionPrice, Digits);
       rowExposure[displayedRows] = DoubleToString(action.exposure, 2);
+      rowMeasuredTimestamp[displayedRows] = FormatMeasuredTimestamp(action);
       rowTicket[displayedRows] = IntegerToString(action.ticket);
       rowSymbolName[displayedRows] = action.symbolName;
       rowTicketDirection[displayedRows] = action.ticketDirection;
@@ -500,6 +539,7 @@ void DrawTable()
                              rowDirection[row],
                              rowExecutionPrice[row],
                              rowExposure[row],
+                             rowMeasuredTimestamp[row],
                              rowTicket[row],
                              rowSymbolName[row],
                              rowTicketDirection[row],
@@ -509,7 +549,7 @@ void DrawTable()
          int colStart = GetColumnStartX(panelLeft, col);
          int colWidth = GetColumnWidth(col);
 
-         bool rightAlign = (col == 0 || col == 5 || col == 6 || col == 7 || col == 8 || col == 9);
+         bool rightAlign = (col == 0 || col == 5 || col == 6 || col == 8 || col == 9 || col == 10);
          if(rightAlign)
             CreateTableLabel("TA_Cell_" + IntegerToString(row + 1) + "_" + IntegerToString(col + 1), text, colStart + colWidth - 4, rowY + 3, InpTextColor, TA_FONT_SIZE, ANCHOR_RIGHT_UPPER);
          else
@@ -683,6 +723,7 @@ void AppendOpenActionFromSnapshot(const OpenTicketSnapshot &snapshot)
    action.profitSinceStart = 0.0;
    action.actionTime = snapshot.openTime;
    action.actionTimeMs = snapshot.openTimeMs;
+   SetMeasuredTimestampNow(action);
    action.ticketType = snapshot.ticketType;
 
    AppendTradeAction(action);
@@ -770,6 +811,7 @@ bool AppendCloseActionFromSnapshot(const OpenTicketSnapshot &snapshot)
    action.profitSinceStart = 0.0;
    action.actionTime = closeTime;
    action.actionTimeMs = closeTimeMs;
+   SetMeasuredTimestampNow(action);
    action.ticketType = historyTicketType;
 
    AppendTradeAction(action);
@@ -930,7 +972,7 @@ void SortOpenTicketSnapshotByTime(OpenTicketSnapshot &snapshot[], int count)
 void SortTradeActionsByTime()
   {
    // Deterministic chronological order:
-   // 1) older actionTimeMs first
+   // 1) older measured timestamp first when available, otherwise older actionTimeMs
    // 2) for same timestamp: open before close
    // 3) then lower ticket first
    for(int i = 1; i < g_tradeActionCount; i++)
@@ -940,8 +982,10 @@ void SortTradeActionsByTime()
 
       while(j >= 0)
         {
-         bool shouldShift = (g_tradeActions[j].actionTimeMs > key.actionTimeMs);
-         if(g_tradeActions[j].actionTimeMs == key.actionTimeMs)
+         long currentSequenceTimeMs = GetTradeActionSequenceTimeMs(g_tradeActions[j]);
+         long keySequenceTimeMs = GetTradeActionSequenceTimeMs(key);
+         bool shouldShift = (currentSequenceTimeMs > keySequenceTimeMs);
+         if(currentSequenceTimeMs == keySequenceTimeMs)
            {
             bool currentIsClose = (g_tradeActions[j].openOrClose == TA_ACTION_CLOSE);
             bool keyIsClose = (key.openOrClose == TA_ACTION_CLOSE);
@@ -1071,6 +1115,8 @@ int EnsureTradeActionSymbolState(TradeActionSymbolState &states[], int &count, s
    state.executionPrice = 0.0;
    state.exposure = 0.0;
    state.profitSinceStart = 0.0;
+   state.hasMeasuredTimestamp = false;
+   state.measuredTimestampMs = 0;
 
    states[newSize - 1] = state;
    count = newSize;
@@ -1099,6 +1145,8 @@ void UpdateTradeActionSymbolStateFromAction(TradeActionSymbolState &state, const
    state.executionPrice = action.executionPrice;
    state.exposure = action.exposure;
    state.profitSinceStart = action.profitSinceStart;
+   state.hasMeasuredTimestamp = action.hasMeasuredTimestamp;
+   state.measuredTimestampMs = action.measuredTimestampMs;
   }
 
 void RecalculateTradeActionDerivedFieldsCore()
@@ -1126,8 +1174,11 @@ void RecalculateTradeActionDerivedFieldsCore()
       action.exposure = RoundTradeActionValue(previousExposure + GetSignedQuantity(action.tradeDirection, action.lots));
 
       action.millisecondsSinceLastAction = 0;
-      if(state.hasPreviousAction && action.actionTimeMs >= state.actionTimeMs)
-         action.millisecondsSinceLastAction = action.actionTimeMs - state.actionTimeMs;
+      if(state.hasPreviousAction &&
+         state.hasMeasuredTimestamp &&
+         action.hasMeasuredTimestamp &&
+         action.measuredTimestampMs >= state.measuredTimestampMs)
+         action.millisecondsSinceLastAction = action.measuredTimestampMs - state.measuredTimestampMs;
 
       action.hasPriceDifferenceFromPrevious = false;
       action.priceDifferenceFromPrevious = 0.0;
@@ -1240,6 +1291,7 @@ void SeedBaselineOpenActions()
       action.profitSinceStart = 0.0;
       action.actionTime = snapshot.openTime;
       action.actionTimeMs = snapshot.openTimeMs;
+      ClearMeasuredTimestamp(action);
       action.ticketType = snapshot.ticketType;
 
       AppendTradeAction(action);
@@ -1250,6 +1302,17 @@ void SeedBaselineOpenActions()
       PrintFormat("TradeAction: Seeded %d baseline open actions.", seededCount);
 
    RecalculateTradeActionDerivedFields();
+  }
+
+string FormatMeasuredTimestamp(const TradeActionRow &action)
+  {
+   if(!action.hasMeasuredTimestamp)
+      return(TA_VALUE_NOT_AVAILABLE);
+
+   int millisecondsPart = (int)(action.measuredTimestampMs % 1000);
+   return(StringFormat("%s.%03d",
+                       TimeToString(action.measuredTimestampLocal, TIME_DATE | TIME_SECONDS),
+                       millisecondsPart));
   }
 
 string FormatPriceDifferenceFromPrevious(const TradeActionRow &action)
@@ -1339,9 +1402,10 @@ int GetColumnWidth(int columnIndex)
       case 4: return(COL_W_TICKET_DIRECTION);
       case 5: return(COL_W_EXEC_PRICE);
       case 6: return(COL_W_EXPOSURE);
-      case 7: return(COL_W_MILLISECONDS_SINCE_LAST);
-      case 8: return(COL_W_PRICE_DIFF_FROM_PREVIOUS);
-      case 9: return(COL_W_PROFIT_SINCE_START);
+      case 7: return(COL_W_MEASURED_TIMESTAMP);
+      case 8: return(COL_W_MILLISECONDS_SINCE_LAST);
+      case 9: return(COL_W_PRICE_DIFF_FROM_PREVIOUS);
+      case 10: return(COL_W_PROFIT_SINCE_START);
      }
    return(80);
   }
@@ -1360,9 +1424,10 @@ string GetColumnTitle(int columnIndex)
       case 4: return("TicketDirection");
       case 5: return("ExecutionPrice");
       case 6: return("Exposure");
-      case 7: return("MillisecondsSinceLastAction");
-      case 8: return("PriceDifferenceFromPrevious");
-      case 9: return("ProfitSinceStart");
+      case 7: return("MeasuredTimestamp");
+      case 8: return("MillisecondsSinceLastAction");
+      case 9: return("PriceDifferenceFromPrevious");
+      case 10: return("ProfitSinceStart");
      }
    return("");
   }
@@ -1399,6 +1464,7 @@ string GetCellValue(int columnIndex,
                     string direction,
                     string execPrice,
                     string exposure,
+                    string measuredTimestamp,
                     string ticket,
                     string symbolName,
                     string ticketDirection,
@@ -1415,9 +1481,10 @@ string GetCellValue(int columnIndex,
       case 4: return(ticketDirection);
       case 5: return(execPrice);
       case 6: return(exposure);
-      case 7: return(millisecondsSinceLastAction);
-      case 8: return(priceDifferenceFromPrevious);
-      case 9: return(profitSinceStart);
+      case 7: return(measuredTimestamp);
+      case 8: return(millisecondsSinceLastAction);
+      case 9: return(priceDifferenceFromPrevious);
+      case 10: return(profitSinceStart);
      }
    return("");
   }

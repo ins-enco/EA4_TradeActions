@@ -8,9 +8,13 @@
   - close buy -> `OpenOrClose=close`, `TradeDirection=sell`
   - close sell -> `OpenOrClose=close`, `TradeDirection=buy`
 - Xac nhan cac cot `Ticket`, `Symbol Name`, `ExecutionPrice`, `Profit` khop voi Terminal (`Trade`/`Account History`).
+- Xac nhan cot `MeasuredTimestamp`:
+  - nam sau `Exposure` va truoc `MillisecondsSinceLastAction`
+  - action duoc detect boi `OnTimer()` hien local PC time theo format `yyyy.MM.dd HH:mm:ss.mmm`
+  - row baseline duoc seed khi attach hien de trong
 - Xac nhan 4 cot derived field follow contract moi:
   - `Exposure = Round(previousExposure + signedQuantity, 10)`
-  - `MillisecondsSinceLastAction = 0` cho action dau tien cua symbol, nguoc lai = chenhlech ms so voi action truoc do cung symbol
+  - `MillisecondsSinceLastAction = 0` neu action hien tai hoac action truoc do cua symbol khong co `MeasuredTimestamp`; nguoc lai = chenhlech giua 2 `MeasuredTimestamp`
   - `PriceDifferenceFromPrevious = N/A` neu khong du dieu kien, chi tinh khi `previousExposure != 0` va direction dao chieu
   - `ProfitSinceStart` giu `previousProfit`, chi cong them `PriceDifferenceFromPrevious` khi cot nay co gia tri
 - Xac nhan khong co runtime error trong tab `Experts` khi chay scenario.
@@ -23,7 +27,7 @@
 - Build result:
   - `Result: 0 errors, 0 warnings`
 - Build artifact:
-  - `TradeAction.ex4` timestamp `2026-03-11 10:22:03`
+  - `TradeAction.ex4` timestamp `2026-03-11 14:19:11`
 
 ## Sprint 3 status
 
@@ -32,31 +36,41 @@
   - Xem them `docs/testing/sprint-3-validation-report.md`
 - Manual MT4 execution:
   - `PENDING`
-  - Chua co bang chung trade tay tren build moi sau khi compile luc `2026-03-11 10:22:03`
+  - Chua co bang chung trade tay tren build moi sau khi compile luc `2026-03-11 14:19:11`
 
 ## Cau hinh test thu cong
 
 1. Attach EA `TradeAction` vao 1 chart symbol de test (vi du `EURUSD`).
 2. Dam bao table da hien va dang trong trang thai "No trade actions recorded since attach" neu chua co action.
 3. Dung 1 account demo va volume nho (vi du `0.01`) de mo/ dong nhanh.
-4. Sau moi action, doi it nhat 1 tick de EA cap nhat table.
+4. Sau moi action, doi it nhat 1 chu ky timer (`InpRefreshIntervalMs`, mac dinh `200 ms`) de EA cap nhat table.
 
 ## Quy uoc ghi nhan ket qua
 
 - Ghi `N/A` khi cot dang o trang thai "khong co gia tri", khong duoc thay bang `0`.
+- Ghi de trong khi row baseline attach khong co `MeasuredTimestamp`.
+- Ghi `local-now` khi chi can xac nhan `MeasuredTimestamp` theo format local time, khong can trung tung mili-giay mau.
 - Ghi `>0` neu chi can xac nhan milliseconds duong, khong can dung gia tri tuyet doi.
 - Neu test bang gia thuc te khong dat dung gia mau, thay gia tri cu the vao cong thuc cung hang va doi chieu ket qua theo cong thuc, khong doi theo con so mau.
 
+## Measured timestamp checks bo sung
+
+| ID | Thao tac | Dieu kien truoc do | Row moi ky vong | MeasuredTimestamp ky vong | Milliseconds ky vong | Ket qua thuc te |
+|---|---|---|---|---|---|---|
+| M0 | Mo 1 lenh BUY `0.10`, sau do attach EA | Lenh da mo truoc khi attach | Row seed `open`, `buy`, `Ticket Direction=BUY` | de trong | `0` | Pending |
+| M1 | Dong lenh BUY cua M0 sau khi attach | Row truoc do la baseline co `MeasuredTimestamp` de trong | `close`, `sell`, `Ticket Direction=BUY` | `local-now` | `0` | Pending |
+| M2 | Sau M1, mo 1 lenh SELL moi `0.10` | Row truoc do da co `MeasuredTimestamp` | `open`, `sell`, `Ticket Direction=SELL` | `local-now` | `>0` | Pending |
+
 ## Scenario Matrix
 
-| ID | Thao tac | Dieu kien truoc do | Row moi ky vong | Exposure ky vong | Milliseconds ky vong | PriceDiff ky vong | ProfitSinceStart ky vong | Ket qua thuc te |
-|---|---|---|---|---|---|---|---|---|
-| S1 | Mo lenh BUY dau tien `0.10` | Symbol chua co action nao | `open`, `buy`, `Ticket Direction=BUY` | `0.10` | `0` | `N/A` | `0` | Pending |
-| S2 | Dong lenh BUY cua S1 | Row truoc la `buy`, `previousExposure=0.10` | `close`, `sell`, `Ticket Direction=BUY` | `0.00` | `>0` | `closePrice - openPrice` | `0 + PriceDiff` | Pending |
-| S3 | Mo them 1 lenh BUY `0.10` khi da co 1 BUY dang mo | Row truoc la `buy`, `previousExposure > 0` | `open`, `buy`, `Ticket Direction=BUY` | `previousExposure + 0.10` | `>0` | `N/A` | `giu previousProfit` | Pending |
-| S4 | Sau khi vua dong 1 SELL va symbol da flat, mo SELL moi `0.10` | Row truoc la `buy` nhung `previousExposure=0` | `open`, `sell`, `Ticket Direction=SELL` | `-0.10` | `>0` | `N/A` | `giu previousProfit` | Pending |
-| S5 | Mo lenh SELL dau tien `0.10` | Symbol chua co action nao | `open`, `sell`, `Ticket Direction=SELL` | `-0.10` | `0` | `N/A` | `0` | Pending |
-| S6 | Dong lenh SELL cua S5 | Row truoc la `sell`, `previousExposure=-0.10` | `close`, `buy`, `Ticket Direction=SELL` | `0.00` | `>0` | `last.Price - price` | `0 + PriceDiff` | Pending |
+| ID | Thao tac | Dieu kien truoc do | Row moi ky vong | Exposure ky vong | MeasuredTimestamp ky vong | Milliseconds ky vong | PriceDiff ky vong | ProfitSinceStart ky vong | Ket qua thuc te |
+|---|---|---|---|---|---|---|---|---|---|
+| S1 | Mo lenh BUY dau tien `0.10` | Symbol chua co action nao | `open`, `buy`, `Ticket Direction=BUY` | `0.10` | `local-now` | `0` | `N/A` | `0` | Pending |
+| S2 | Dong lenh BUY cua S1 | Row truoc la `buy`, `previousExposure=0.10` | `close`, `sell`, `Ticket Direction=BUY` | `0.00` | `local-now` | `>0` | `closePrice - openPrice` | `0 + PriceDiff` | Pending |
+| S3 | Mo them 1 lenh BUY `0.10` khi da co 1 BUY dang mo | Row truoc la `buy`, `previousExposure > 0` | `open`, `buy`, `Ticket Direction=BUY` | `previousExposure + 0.10` | `local-now` | `>0` | `N/A` | `giu previousProfit` | Pending |
+| S4 | Sau khi vua dong 1 SELL va symbol da flat, mo SELL moi `0.10` | Row truoc la `buy` nhung `previousExposure=0` | `open`, `sell`, `Ticket Direction=SELL` | `-0.10` | `local-now` | `>0` | `N/A` | `giu previousProfit` | Pending |
+| S5 | Mo lenh SELL dau tien `0.10` | Symbol chua co action nao | `open`, `sell`, `Ticket Direction=SELL` | `-0.10` | `local-now` | `0` | `N/A` | `0` | Pending |
+| S6 | Dong lenh SELL cua S5 | Row truoc la `sell`, `previousExposure=-0.10` | `close`, `buy`, `Ticket Direction=SELL` | `0.00` | `local-now` | `>0` | `last.Price - price` | `0 + PriceDiff` | Pending |
 
 ## Worked examples
 
@@ -96,7 +110,8 @@ Danh dau `PASS/FAIL` sau khi chay toi thieu S1-S6 va doi chieu them voi Example 
 | ExecutionPrice | open: OrderOpenPrice, close: OrderClosePrice | Pending | |
 | Profit | close: `OrderProfit + Swap + Commission` | Pending | |
 | Exposure | `Round(previousExposure + signedQuantity, 10)` theo action truoc do cung symbol | Pending | |
-| MillisecondsSinceLastAction | `0` o action dau tien cua symbol, nguoc lai = chenhlech ms so voi action truoc do cung symbol | Pending | |
+| MeasuredTimestamp | local PC time theo format `yyyy.MM.dd HH:mm:ss.mmm`; baseline attach de trong | Pending | |
+| MillisecondsSinceLastAction | `0` neu row hien tai hoac row truoc do cua symbol khong co `MeasuredTimestamp`; nguoc lai = chenh lech giua 2 `MeasuredTimestamp` | Pending | |
 | PriceDifferenceFromPrevious | `N/A` neu khong du dieu kien; chi tinh khi `previousExposure != 0` va direction dao chieu | Pending | |
 | ProfitSinceStart | Mac dinh giu `previousProfit`; chi cong them `PriceDifferenceFromPrevious` khi cot nay co gia tri | Pending | |
 
@@ -115,4 +130,4 @@ Ket qua:
 
 - Trang thai hien tai: `CLI/source validation done, waiting for manual MT4 execution`.
 - Da co validation report cho build moi o `docs/testing/sprint-3-validation-report.md`.
-- Can ban chay tay S1-S6 trong MT4 sau khi reload build `TradeAction.ex4` timestamp `2026-03-11 10:22:03` de dong dau `PASS/FAIL`.
+- Can ban chay tay M0-M2 va S1-S6 trong MT4 sau khi reload build `TradeAction.ex4` timestamp `2026-03-11 14:19:11` de dong dau `PASS/FAIL`.
