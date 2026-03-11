@@ -17,11 +17,22 @@
 
 ## Pre-check tu dong (CLI)
 
-- Date: `2026-03-10`
+- Date: `2026-03-11`
 - Build command:
   - `metaeditor.exe /compile:.../TradeAction.mq4 /log:.../metaeditor-mt4-compile.log`
 - Build result:
   - `Result: 0 errors, 0 warnings`
+- Build artifact:
+  - `TradeAction.ex4` timestamp `2026-03-11 10:22:03`
+
+## Sprint 3 status
+
+- CLI/source validation:
+  - `PASS`
+  - Xem them `docs/testing/sprint-3-validation-report.md`
+- Manual MT4 execution:
+  - `PENDING`
+  - Chua co bang chung trade tay tren build moi sau khi compile luc `2026-03-11 10:22:03`
 
 ## Cau hinh test thu cong
 
@@ -102,6 +113,6 @@ Ket qua:
 
 ## Ket luan Task 3.3
 
-- Trang thai hien tai: `Ready for manual execution`.
-- Da hoan tat phan chuan bi matrix/checklist cho contract derived columns moi.
-- Can ban chay tay S1-S6 trong MT4 de dong dau `PASS/FAIL`.
+- Trang thai hien tai: `CLI/source validation done, waiting for manual MT4 execution`.
+- Da co validation report cho build moi o `docs/testing/sprint-3-validation-report.md`.
+- Can ban chay tay S1-S6 trong MT4 sau khi reload build `TradeAction.ex4` timestamp `2026-03-11 10:22:03` de dong dau `PASS/FAIL`.

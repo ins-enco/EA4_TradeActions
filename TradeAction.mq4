@@ -42,6 +42,9 @@ int TA_ACTION_LOG_RETENTION          = 200;
 
 string TA_ACTION_OPEN  = "open";
 string TA_ACTION_CLOSE = "close";
+int    TA_DERIVED_DECIMALS = 10;
+double TA_EXPOSURE_EPSILON = 0.000001;
+string TA_VALUE_NOT_AVAILABLE = "";
 
 struct TradeActionRow
   {
@@ -56,6 +59,7 @@ struct TradeActionRow
    string   ticketDirection;
    long     millisecondsSinceLastAction;
    double   priceDifferenceFromPrevious;
+   bool     hasPriceDifferenceFromPrevious;
    double   profitSinceStart;
    datetime actionTime;
    long     actionTimeMs;
@@ -73,20 +77,31 @@ struct OpenTicketSnapshot
    long     openTimeMs;
   };
 
-double   g_equityAtAttach = 0.0;
+struct TradeActionSymbolState
+  {
+   string   symbolName;
+   bool     hasPreviousAction;
+   string   tradeDirection;
+   long     actionTimeMs;
+   double   executionPrice;
+   double   exposure;
+   double   profitSinceStart;
+  };
+
 TradeActionRow g_tradeActions[];
 int      g_tradeActionCount = 0;
 OpenTicketSnapshot g_openTicketSnapshot[];
 int      g_openTicketSnapshotCount = 0;
 OpenTicketSnapshot g_pendingCloseSnapshot[];
 int      g_pendingCloseSnapshotCount = 0;
-double   g_tradeActionExposureBaseline = 0.0;
+TradeActionSymbolState g_tradeActionSymbolBaselines[];
+int      g_tradeActionSymbolBaselineCount = 0;
 
 void   DrawTable();
-double GetExposure(double currentExposure = 0.0, int orderType = -1, double lots = 0.0);
 string ResolveTradeDirection(int ticketType, bool isCloseAction);
 string ResolveTicketDirection(int ticketType);
 void   ResetTradeActionStorage();
+void   ResetTradeActionBaselineStorage();
 void   AppendTradeAction(const TradeActionRow &action);
 bool   IsTrackableTicketType(int orderType);
 void   ResetOpenTicketSnapshotStorage();
@@ -114,13 +129,21 @@ void   RefreshOpenTicketSnapshot(bool detectNewOpenActions = false);
 void   SortOpenTicketSnapshotByTime(OpenTicketSnapshot &snapshot[], int count);
 void   SortTradeActionsByTime();
 bool   TrimTradeActionLog(int maxActions);
-double GetExposureAfterAction(double currentExposure, const TradeActionRow &action);
+double GetSignedQuantity(string tradeDirection, double lots);
+double RoundTradeActionValue(double value);
+bool   IsOppositeTradeDirection(string currentDirection, string previousDirection);
+int    FindTradeActionSymbolStateIndex(TradeActionSymbolState &states[], int count, string symbolName);
+int    EnsureTradeActionSymbolState(TradeActionSymbolState &states[], int &count, string symbolName);
+void   CopyTradeActionSymbolBaselines(TradeActionSymbolState &states[], int &count);
+void   UpdateTradeActionSymbolStateFromAction(TradeActionSymbolState &state, const TradeActionRow &action);
 void   RecalculateTradeActionDerivedFieldsCore();
 void   RecalculateTradeActionDerivedFields();
 bool   HasOpenActionForTicket(int ticket);
 bool   HasCloseActionForTicket(int ticket);
 double GetOpenTicketFloatingProfit(int ticket);
 void   SeedBaselineOpenActions();
+string FormatPriceDifferenceFromPrevious(const TradeActionRow &action);
+string FormatProfitSinceStart(const TradeActionRow &action);
 void   ClearTable();
 void   CreateRectangle(string name, int x, int y, int width, int height, color bgColor, color borderColor, int borderWidth = 1);
 void   CreateTableLabel(string name, string text, int x, int y, color textColor, int fontSize, ENUM_ANCHOR_POINT anchor);
@@ -145,7 +168,6 @@ string GetCellValue(int columnIndex,
 //+------------------------------------------------------------------+
 int OnInit()
   {
-   g_equityAtAttach = AccountEquity();
    ResetTradeActionStorage();
    ResetPendingCloseStorage();
    RefreshOpenTicketSnapshot(false);
@@ -210,8 +232,8 @@ void DrawTable()
       rowSymbolName[displayedRows] = action.symbolName;
       rowTicketDirection[displayedRows] = action.ticketDirection;
       rowMillisecondsSinceLastAction[displayedRows] = DoubleToString(action.millisecondsSinceLastAction, 0);
-      rowPriceDifferenceFromPrevious[displayedRows] = DoubleToString(action.priceDifferenceFromPrevious, Digits);
-      rowProfitSinceStart[displayedRows] = DoubleToString(action.profitSinceStart, 2);
+      rowPriceDifferenceFromPrevious[displayedRows] = FormatPriceDifferenceFromPrevious(action);
+      rowProfitSinceStart[displayedRows] = FormatProfitSinceStart(action);
 
       displayedRows++;
      }
@@ -341,7 +363,13 @@ void ResetTradeActionStorage()
   {
    ArrayResize(g_tradeActions, 0);
    g_tradeActionCount = 0;
-   g_tradeActionExposureBaseline = 0.0;
+   ResetTradeActionBaselineStorage();
+  }
+
+void ResetTradeActionBaselineStorage()
+  {
+   ArrayResize(g_tradeActionSymbolBaselines, 0);
+   g_tradeActionSymbolBaselineCount = 0;
   }
 
 void AppendTradeAction(const TradeActionRow &action)
@@ -456,29 +484,13 @@ void AppendOpenActionFromSnapshot(const OpenTicketSnapshot &snapshot)
    action.tradeDirection = ResolveTradeDirection(snapshot.ticketType, false);
    action.executionPrice = snapshot.openPrice;
    action.lots = snapshot.lots;
-
-   double previousExposure = 0.0;
-   long previousActionTimeMs = 0;
-   double previousExecutionPrice = 0.0;
-   if(g_tradeActionCount > 0)
-     {
-      previousExposure = g_tradeActions[g_tradeActionCount - 1].exposure;
-      previousActionTimeMs = g_tradeActions[g_tradeActionCount - 1].actionTimeMs;
-      previousExecutionPrice = g_tradeActions[g_tradeActionCount - 1].executionPrice;
-     }
-
-   action.exposure = GetExposure(previousExposure, snapshot.ticketType, snapshot.lots);
+   action.exposure = 0.0;
    action.profit = GetOpenTicketFloatingProfit(snapshot.ticket);
    action.ticketDirection = ResolveTicketDirection(snapshot.ticketType);
    action.millisecondsSinceLastAction = 0;
-   if(previousActionTimeMs > 0 && snapshot.openTimeMs >= previousActionTimeMs)
-      action.millisecondsSinceLastAction = snapshot.openTimeMs - previousActionTimeMs;
-
    action.priceDifferenceFromPrevious = 0.0;
-   if(g_tradeActionCount > 0)
-      action.priceDifferenceFromPrevious = snapshot.openPrice - previousExecutionPrice;
-
-   action.profitSinceStart = AccountEquity() - g_equityAtAttach;
+   action.hasPriceDifferenceFromPrevious = false;
+   action.profitSinceStart = 0.0;
    action.actionTime = snapshot.openTime;
    action.actionTimeMs = snapshot.openTimeMs;
    action.ticketType = snapshot.ticketType;
@@ -559,35 +571,13 @@ bool AppendCloseActionFromSnapshot(const OpenTicketSnapshot &snapshot)
    action.tradeDirection = ResolveTradeDirection(historyTicketType, true);
    action.executionPrice = closePrice;
    action.lots = snapshot.lots;
-
-   double previousExposure = 0.0;
-   long previousActionTimeMs = 0;
-   double previousExecutionPrice = 0.0;
-   if(g_tradeActionCount > 0)
-     {
-      previousExposure = g_tradeActions[g_tradeActionCount - 1].exposure;
-      previousActionTimeMs = g_tradeActions[g_tradeActionCount - 1].actionTimeMs;
-      previousExecutionPrice = g_tradeActions[g_tradeActionCount - 1].executionPrice;
-     }
-
-   if(historyTicketType == OP_BUY)
-      action.exposure = previousExposure - snapshot.lots;
-   else if(historyTicketType == OP_SELL)
-      action.exposure = previousExposure + snapshot.lots;
-   else
-      action.exposure = previousExposure;
-
+   action.exposure = 0.0;
    action.profit = realizedProfit;
    action.ticketDirection = ResolveTicketDirection(historyTicketType);
    action.millisecondsSinceLastAction = 0;
-   if(previousActionTimeMs > 0 && closeTimeMs >= previousActionTimeMs)
-      action.millisecondsSinceLastAction = closeTimeMs - previousActionTimeMs;
-
    action.priceDifferenceFromPrevious = 0.0;
-   if(g_tradeActionCount > 0)
-      action.priceDifferenceFromPrevious = closePrice - previousExecutionPrice;
-
-   action.profitSinceStart = AccountEquity() - g_equityAtAttach;
+   action.hasPriceDifferenceFromPrevious = false;
+   action.profitSinceStart = 0.0;
    action.actionTime = closeTime;
    action.actionTimeMs = closeTimeMs;
    action.ticketType = historyTicketType;
@@ -792,7 +782,22 @@ bool TrimTradeActionLog(int maxActions)
    if(dropCount <= 0)
       return(false);
 
-   double newExposureBaseline = g_tradeActions[dropCount - 1].exposure;
+   TradeActionSymbolState newBaselines[];
+   int newBaselineCount = 0;
+   CopyTradeActionSymbolBaselines(newBaselines, newBaselineCount);
+   if(g_tradeActionSymbolBaselineCount > 0 && newBaselineCount != g_tradeActionSymbolBaselineCount)
+      return(false);
+
+   for(int i = 0; i < dropCount; i++)
+     {
+      TradeActionRow dropped = g_tradeActions[i];
+      int stateIndex = EnsureTradeActionSymbolState(newBaselines, newBaselineCount, dropped.symbolName);
+      if(stateIndex < 0)
+         return(false);
+
+      UpdateTradeActionSymbolStateFromAction(newBaselines[stateIndex], dropped);
+     }
+
    TradeActionRow retained[];
    if(ArrayResize(retained, maxActions) != maxActions)
       return(false);
@@ -806,30 +811,104 @@ bool TrimTradeActionLog(int maxActions)
    for(int i = 0; i < maxActions; i++)
       g_tradeActions[i] = retained[i];
 
-   g_tradeActionExposureBaseline = newExposureBaseline;
+   if(ArrayResize(g_tradeActionSymbolBaselines, newBaselineCount) != newBaselineCount)
+      return(false);
+
+   for(int i = 0; i < newBaselineCount; i++)
+      g_tradeActionSymbolBaselines[i] = newBaselines[i];
+
+   g_tradeActionSymbolBaselineCount = newBaselineCount;
    g_tradeActionCount = maxActions;
    return(true);
   }
 
-double GetExposureAfterAction(double currentExposure, const TradeActionRow &action)
+double GetSignedQuantity(string tradeDirection, double lots)
   {
-   double lots = action.lots;
    if(lots < 0.0)
       lots = -lots;
 
-   if(action.openOrClose == TA_ACTION_OPEN)
-      return(GetExposure(currentExposure, action.ticketType, lots));
+   if(tradeDirection == "buy")
+      return(lots);
 
-   if(action.openOrClose == TA_ACTION_CLOSE)
+   if(tradeDirection == "sell")
+      return(-lots);
+
+   return(0.0);
+  }
+
+double RoundTradeActionValue(double value)
+  {
+   return(NormalizeDouble(value, TA_DERIVED_DECIMALS));
+  }
+
+bool IsOppositeTradeDirection(string currentDirection, string previousDirection)
+  {
+   if(currentDirection == "buy" && previousDirection == "sell")
+      return(true);
+
+   if(currentDirection == "sell" && previousDirection == "buy")
+      return(true);
+
+   return(false);
+  }
+
+int FindTradeActionSymbolStateIndex(TradeActionSymbolState &states[], int count, string symbolName)
+  {
+   for(int i = 0; i < count; i++)
      {
-      if(action.ticketType == OP_BUY)
-         return(currentExposure - lots);
-
-      if(action.ticketType == OP_SELL)
-         return(currentExposure + lots);
+      if(states[i].symbolName == symbolName)
+         return(i);
      }
 
-   return(currentExposure);
+   return(-1);
+  }
+
+int EnsureTradeActionSymbolState(TradeActionSymbolState &states[], int &count, string symbolName)
+  {
+   int existingIndex = FindTradeActionSymbolStateIndex(states, count, symbolName);
+   if(existingIndex >= 0)
+      return(existingIndex);
+
+   int newSize = count + 1;
+   if(ArrayResize(states, newSize) != newSize)
+      return(-1);
+
+   TradeActionSymbolState state;
+   state.symbolName = symbolName;
+   state.hasPreviousAction = false;
+   state.tradeDirection = "";
+   state.actionTimeMs = 0;
+   state.executionPrice = 0.0;
+   state.exposure = 0.0;
+   state.profitSinceStart = 0.0;
+
+   states[newSize - 1] = state;
+   count = newSize;
+   return(newSize - 1);
+  }
+
+void CopyTradeActionSymbolBaselines(TradeActionSymbolState &states[], int &count)
+  {
+   count = g_tradeActionSymbolBaselineCount;
+   if(ArrayResize(states, count) != count)
+     {
+      count = 0;
+      return;
+     }
+
+   for(int i = 0; i < count; i++)
+      states[i] = g_tradeActionSymbolBaselines[i];
+  }
+
+void UpdateTradeActionSymbolStateFromAction(TradeActionSymbolState &state, const TradeActionRow &action)
+  {
+   state.symbolName = action.symbolName;
+   state.hasPreviousAction = true;
+   state.tradeDirection = action.tradeDirection;
+   state.actionTimeMs = action.actionTimeMs;
+   state.executionPrice = action.executionPrice;
+   state.exposure = action.exposure;
+   state.profitSinceStart = action.profitSinceStart;
   }
 
 void RecalculateTradeActionDerivedFieldsCore()
@@ -837,30 +916,50 @@ void RecalculateTradeActionDerivedFieldsCore()
    if(g_tradeActionCount <= 0)
       return;
 
-   double runningExposure = g_tradeActionExposureBaseline;
-   long previousActionTimeMs = 0;
-   double previousExecutionPrice = 0.0;
-   double profitSinceAttach = AccountEquity() - g_equityAtAttach;
+   TradeActionSymbolState states[];
+   int stateCount = 0;
+   CopyTradeActionSymbolBaselines(states, stateCount);
+   if(g_tradeActionSymbolBaselineCount > 0 && stateCount != g_tradeActionSymbolBaselineCount)
+      return;
 
    for(int i = 0; i < g_tradeActionCount; i++)
      {
       TradeActionRow action = g_tradeActions[i];
-      action.exposure = GetExposureAfterAction(runningExposure, action);
-      runningExposure = action.exposure;
+      int stateIndex = EnsureTradeActionSymbolState(states, stateCount, action.symbolName);
+      if(stateIndex < 0)
+         return;
+
+      TradeActionSymbolState state = states[stateIndex];
+      double previousExposure = state.hasPreviousAction ? state.exposure : 0.0;
+      double previousProfit = state.hasPreviousAction ? state.profitSinceStart : 0.0;
+
+      action.exposure = RoundTradeActionValue(previousExposure + GetSignedQuantity(action.tradeDirection, action.lots));
 
       action.millisecondsSinceLastAction = 0;
-      if(previousActionTimeMs > 0 && action.actionTimeMs >= previousActionTimeMs)
-         action.millisecondsSinceLastAction = action.actionTimeMs - previousActionTimeMs;
+      if(state.hasPreviousAction && action.actionTimeMs >= state.actionTimeMs)
+         action.millisecondsSinceLastAction = action.actionTimeMs - state.actionTimeMs;
 
+      action.hasPriceDifferenceFromPrevious = false;
       action.priceDifferenceFromPrevious = 0.0;
-      if(i > 0)
-         action.priceDifferenceFromPrevious = action.executionPrice - previousExecutionPrice;
+      action.profitSinceStart = RoundTradeActionValue(previousProfit);
+      if(state.hasPreviousAction &&
+         MathAbs(previousExposure) > TA_EXPOSURE_EPSILON &&
+         IsOppositeTradeDirection(action.tradeDirection, state.tradeDirection))
+        {
+         double priceDifference = 0.0;
+         if(action.tradeDirection == "buy")
+            priceDifference = state.executionPrice - action.executionPrice;
+         else if(action.tradeDirection == "sell")
+            priceDifference = action.executionPrice - state.executionPrice;
 
-      action.profitSinceStart = profitSinceAttach;
+         action.hasPriceDifferenceFromPrevious = true;
+         action.priceDifferenceFromPrevious = RoundTradeActionValue(priceDifference);
+         action.profitSinceStart = RoundTradeActionValue(previousProfit + action.priceDifferenceFromPrevious);
+        }
+
       g_tradeActions[i] = action;
-
-      previousActionTimeMs = action.actionTimeMs;
-      previousExecutionPrice = action.executionPrice;
+      UpdateTradeActionSymbolStateFromAction(state, action);
+      states[stateIndex] = state;
      }
   }
 
@@ -927,11 +1026,6 @@ void SeedBaselineOpenActions()
       ordered[i] = g_openTicketSnapshot[i];
 
    SortOpenTicketSnapshotByTime(ordered, snapshotCount);
-
-   double runningExposure = 0.0;
-   long previousActionTimeMs = 0;
-   double previousExecutionPrice = 0.0;
-   double profitSinceAttach = AccountEquity() - g_equityAtAttach;
    int seededCount = 0;
 
    for(int i = 0; i < snapshotCount; i++)
@@ -947,24 +1041,18 @@ void SeedBaselineOpenActions()
       action.tradeDirection = ResolveTradeDirection(snapshot.ticketType, false);
       action.executionPrice = snapshot.openPrice;
       action.lots = snapshot.lots;
-      runningExposure = GetExposure(runningExposure, snapshot.ticketType, snapshot.lots);
-      action.exposure = runningExposure;
+      action.exposure = 0.0;
       action.profit = GetOpenTicketFloatingProfit(snapshot.ticket);
       action.ticketDirection = ResolveTicketDirection(snapshot.ticketType);
       action.millisecondsSinceLastAction = 0;
-      if(previousActionTimeMs > 0 && snapshot.openTimeMs >= previousActionTimeMs)
-         action.millisecondsSinceLastAction = snapshot.openTimeMs - previousActionTimeMs;
       action.priceDifferenceFromPrevious = 0.0;
-      if(seededCount > 0)
-         action.priceDifferenceFromPrevious = snapshot.openPrice - previousExecutionPrice;
-      action.profitSinceStart = profitSinceAttach;
+      action.hasPriceDifferenceFromPrevious = false;
+      action.profitSinceStart = 0.0;
       action.actionTime = snapshot.openTime;
       action.actionTimeMs = snapshot.openTimeMs;
       action.ticketType = snapshot.ticketType;
 
       AppendTradeAction(action);
-      previousActionTimeMs = snapshot.openTimeMs;
-      previousExecutionPrice = snapshot.openPrice;
       seededCount++;
      }
 
@@ -974,39 +1062,18 @@ void SeedBaselineOpenActions()
    RecalculateTradeActionDerivedFields();
   }
 
-//+------------------------------------------------------------------+
-//| Exposure helper                                                  |
-//| - With args: update running exposure                             |
-//| - Without args: calculate full net exposure for current symbol   |
-//+------------------------------------------------------------------+
-double GetExposure(double currentExposure, int orderType, double lots)
+string FormatPriceDifferenceFromPrevious(const TradeActionRow &action)
   {
-   if(orderType == OP_BUY)
-      return(currentExposure + lots);
+   if(!action.hasPriceDifferenceFromPrevious)
+      return(TA_VALUE_NOT_AVAILABLE);
 
-   if(orderType == OP_SELL)
-      return(currentExposure - lots);
-
-   double totalExposure = 0.0;
-   for(int i = 0; i < OrdersTotal(); i++)
-     {
-      if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES))
-         continue;
-
-      if(OrderSymbol() != Symbol())
-         continue;
-
-      int type = OrderType();
-      if(type == OP_BUY)
-         totalExposure += OrderLots();
-      else if(type == OP_SELL)
-         totalExposure -= OrderLots();
-     }
-
-  return(totalExposure);
+   return(DoubleToString(action.priceDifferenceFromPrevious, Digits));
   }
 
-
+string FormatProfitSinceStart(const TradeActionRow &action)
+  {
+   return(DoubleToString(action.profitSinceStart, Digits));
+  }
 
 //+------------------------------------------------------------------+
 //| Remove all table objects                                         |
