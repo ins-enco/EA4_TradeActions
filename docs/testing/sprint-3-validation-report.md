@@ -2,9 +2,10 @@
 
 ## Scope
 
-- Validate build moi cua `TradeAction.mq4` sau Sprint 2.
+- Validate build moi cua `TradeAction.mq4` sau Sprint 3.
 - Xac minh contract cho `Exposure`, `MillisecondsSinceLastAction`, `PriceDifferenceFromPrevious`, `ProfitSinceStart` bang source walkthrough va scenario simulation.
 - Tach ro phan nao da PASS bang CLI/source, phan nao van can trade tay trong MT4.
+- Theo doi them thay doi Sprint 3: timer-driven refresh va dirty redraw guard de giam object churn/flicker.
 
 ## Validation completed
 
@@ -12,9 +13,9 @@
 
 - Date: `2026-03-11`
 - Source timestamp:
-  - `TradeAction.mq4`: `2026-03-11 10:21:40`
+  - `TradeAction.mq4`: `2026-03-11 11:57:58`
 - Output timestamp:
-  - `TradeAction.ex4`: `2026-03-11 10:22:03`
+  - `TradeAction.ex4`: `2026-03-11 11:58:23`
 - Compile log:
   - `metaeditor-mt4-compile.log`
 - Result:
@@ -79,6 +80,18 @@
     - `TradeAction: detected 1 close action(s) from snapshot diff.`
   - Tuy nhien cac dong event nay la truoc build moi `2026-03-11 10:22:03`, nen chi co gia tri tham chieu cho flow, khong thay the duoc runtime validation cua build hien tai.
 
+### 6. Sprint 3 source review: timer-driven redraw policy
+
+- Result:
+  - `PASS` cho source review
+- Files:
+  - `TradeAction.mq4`
+- Notes:
+  - `OnTick()` da duoc de rong, khong con la refresh owner.
+  - `OnTimer()` goi `RunTimerRefreshCycle()` de poll trade state theo `InpRefreshIntervalMs`.
+  - `RefreshTradeActionView()` chi `DrawTable()` khi render state thay doi, chart width thay doi, hoac object table bi mat.
+  - Dirty redraw guard giu lai object tren chart giua cac cycle timer neu table visible state khong doi.
+
 ## Still pending
 
 1. Manual MT4 execution tren build moi `TradeAction.ex4` timestamp `2026-03-11 10:22:03`
@@ -90,9 +103,16 @@
 3. UI verification
    - Xac nhan `PriceDifferenceFromPrevious` hien `N/A` tren table, khong phai `0`
    - Xac nhan `Exposure` va `ProfitSinceStart` hien dung dinh dang mong muon tren chart
+4. Timer-driven refresh verification
+   - Gan EA len quiet chart va mo/close lenh tu terminal hoac chart khac
+   - Xac nhan table update trong khoang `InpRefreshIntervalMs` ma khong can tick moi tren chart attach
+5. Dirty redraw / flicker verification
+   - Thu voi `InpRefreshIntervalMs = 100`, `200`, `500`
+   - Resize chart khi khong co trade change va xac nhan table van redraw dung layout
+   - Theo doi `Experts` xem co log `timer cadence lagged` hoac `timer refresh took` thuong xuyen hay khong
 
 ## Suggested next step
 
-- Reload EA `TradeAction` tren MT4 sau ban compile `2026-03-11 10:22:03`.
+- Reload EA `TradeAction` tren MT4 sau ban compile `2026-03-11 11:58:23`.
 - Chay lan luot S1-S6.
 - Ghi lai ket qua thuc te vao `docs/testing/task-3.3-manual-scenario-matrix.md`.

@@ -106,8 +106,13 @@ bool     g_refreshInProgress = false;
 bool     g_timerLagLogged = false;
 bool     g_timerOverrunLogged = false;
 ulong    g_lastTimerRunUs = 0;
+string   g_lastTableRenderState = "";
+bool     g_hasRenderedTable = false;
 
 int    NormalizeRefreshIntervalMs(int requestedIntervalMs);
+int    GetTableChartWidth();
+string BuildTableRenderState();
+void   ResetTableRenderState();
 bool   StartRefreshTimer();
 void   StopRefreshTimer();
 void   RefreshTradeActionView(bool detectNewOpenActions, bool seedBaseline, bool redrawTable);
@@ -193,6 +198,53 @@ int NormalizeRefreshIntervalMs(int requestedIntervalMs)
    return(intervalMs);
   }
 
+int GetTableChartWidth()
+  {
+   int chartWidth = (int)ChartGetInteger(0, CHART_WIDTH_IN_PIXELS, 0);
+   if(chartWidth <= 0)
+      chartWidth = 800;
+
+   return(chartWidth);
+  }
+
+string BuildTableRenderState()
+  {
+   int chartWidth = GetTableChartWidth();
+   int displayedRows = 0;
+   int startIndex = 0;
+   if(g_tradeActionCount > TA_MAX_ROWS)
+      startIndex = g_tradeActionCount - TA_MAX_ROWS;
+
+   string state = IntegerToString(chartWidth) + "|" + IntegerToString(startIndex) + "|" + IntegerToString(g_tradeActionCount);
+
+   for(int actionIndex = startIndex; actionIndex < g_tradeActionCount && displayedRows < TA_MAX_ROWS; actionIndex++)
+     {
+      TradeActionRow action = g_tradeActions[actionIndex];
+      state += "|" + IntegerToString(action.ticket);
+      state += "|" + action.openOrClose;
+      state += "|" + action.symbolName;
+      state += "|" + action.tradeDirection;
+      state += "|" + action.ticketDirection;
+      state += "|" + DoubleToString(action.executionPrice, Digits);
+      state += "|" + DoubleToString(action.exposure, 2);
+      state += "|" + DoubleToString(action.millisecondsSinceLastAction, 0);
+      state += "|" + FormatPriceDifferenceFromPrevious(action);
+      state += "|" + FormatProfitSinceStart(action);
+      displayedRows++;
+     }
+
+   if(displayedRows == 0)
+      state += "|empty";
+
+   return(state);
+  }
+
+void ResetTableRenderState()
+  {
+   g_lastTableRenderState = "";
+   g_hasRenderedTable = false;
+  }
+
 bool StartRefreshTimer()
   {
    StopRefreshTimer();
@@ -232,7 +284,16 @@ void RefreshTradeActionView(bool detectNewOpenActions, bool seedBaseline, bool r
       SeedBaselineOpenActions();
 
    if(redrawTable)
-      DrawTable();
+     {
+      string renderState = BuildTableRenderState();
+      bool missingTableObjects = (ObjectFind(0, "TA_Background") < 0);
+      if(!g_hasRenderedTable || missingTableObjects || renderState != g_lastTableRenderState)
+        {
+         DrawTable();
+         g_lastTableRenderState = renderState;
+         g_hasRenderedTable = true;
+        }
+     }
   }
 
 void RunTimerRefreshCycle()
@@ -288,6 +349,7 @@ int OnInit()
    ResetTradeActionStorage();
    ResetOpenTicketSnapshotStorage();
    ResetPendingCloseStorage();
+   ResetTableRenderState();
    g_refreshIntervalMs = NormalizeRefreshIntervalMs(InpRefreshIntervalMs);
    if(g_refreshIntervalMs != InpRefreshIntervalMs)
       PrintFormat("TradeAction: normalized refresh interval from %d ms to %d ms.",
@@ -311,6 +373,7 @@ void OnDeinit(const int reason)
    ResetOpenTicketSnapshotStorage();
    ResetPendingCloseStorage();
    ClearTable();
+   ResetTableRenderState();
   }
 
 //+------------------------------------------------------------------+
@@ -375,9 +438,7 @@ void DrawTable()
    int panelWidth = contentWidth + (TA_PADDING_X * 2);
    int panelHeight = (TA_PADDING_Y * 2) + TA_TITLE_HEIGHT + TA_HEADER_HEIGHT + (displayedRows * TA_ROW_HEIGHT);
 
-   int chartWidth = (int)ChartGetInteger(0, CHART_WIDTH_IN_PIXELS, 0);
-   if(chartWidth <= 0)
-      chartWidth = 800;
+   int chartWidth = GetTableChartWidth();
 
    int panelLeft = chartWidth - TA_RIGHT_MARGIN - panelWidth;
    if(panelLeft < 0)
