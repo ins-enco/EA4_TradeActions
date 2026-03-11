@@ -12,6 +12,7 @@ input color InpGridColor            = C'85,85,85';
 input color InpTextColor            = clrWhite;
 input color InpTitleColor           = clrGold;
 input color InpEmptyTextColor       = clrSilver;
+input int   InpRefreshIntervalMs    = 200;
 
 // Table layout
 string TA_PREFIX         = "TA_";
@@ -45,6 +46,9 @@ string TA_ACTION_CLOSE = "close";
 int    TA_DERIVED_DECIMALS = 10;
 double TA_EXPOSURE_EPSILON = 0.000001;
 string TA_VALUE_NOT_AVAILABLE = "";
+int    TA_REFRESH_INTERVAL_MS_MIN = 50;
+int    TA_REFRESH_INTERVAL_MS_MAX = 5000;
+int    TA_REFRESH_INTERVAL_MS_DEFAULT = 200;
 
 struct TradeActionRow
   {
@@ -96,7 +100,18 @@ OpenTicketSnapshot g_pendingCloseSnapshot[];
 int      g_pendingCloseSnapshotCount = 0;
 TradeActionSymbolState g_tradeActionSymbolBaselines[];
 int      g_tradeActionSymbolBaselineCount = 0;
+int      g_refreshIntervalMs = 0;
+bool     g_refreshTimerStarted = false;
+bool     g_refreshInProgress = false;
+bool     g_timerLagLogged = false;
+bool     g_timerOverrunLogged = false;
+ulong    g_lastTimerRunUs = 0;
 
+int    NormalizeRefreshIntervalMs(int requestedIntervalMs);
+bool   StartRefreshTimer();
+void   StopRefreshTimer();
+void   RefreshTradeActionView(bool detectNewOpenActions, bool seedBaseline, bool redrawTable);
+void   RunTimerRefreshCycle();
 void   DrawTable();
 string ResolveTradeDirection(int ticketType, bool isCloseAction);
 string ResolveTicketDirection(int ticketType);
@@ -163,16 +178,126 @@ string GetCellValue(int columnIndex,
                     string priceDifferenceFromPrevious,
                     string profitSinceStart);
 
+int NormalizeRefreshIntervalMs(int requestedIntervalMs)
+  {
+   int intervalMs = requestedIntervalMs;
+   if(intervalMs <= 0)
+      intervalMs = TA_REFRESH_INTERVAL_MS_DEFAULT;
+
+   if(intervalMs < TA_REFRESH_INTERVAL_MS_MIN)
+      intervalMs = TA_REFRESH_INTERVAL_MS_MIN;
+
+   if(intervalMs > TA_REFRESH_INTERVAL_MS_MAX)
+      intervalMs = TA_REFRESH_INTERVAL_MS_MAX;
+
+   return(intervalMs);
+  }
+
+bool StartRefreshTimer()
+  {
+   StopRefreshTimer();
+   ResetLastError();
+   if(!EventSetMillisecondTimer(g_refreshIntervalMs))
+     {
+      PrintFormat("TradeAction: failed to start timer at %d ms (error %d).",
+                  g_refreshIntervalMs,
+                  GetLastError());
+      g_refreshTimerStarted = false;
+      return(false);
+     }
+
+   g_refreshTimerStarted = true;
+   PrintFormat("TradeAction: started millisecond timer at %d ms.", g_refreshIntervalMs);
+   return(true);
+  }
+
+void StopRefreshTimer()
+  {
+   if(!g_refreshTimerStarted)
+      return;
+
+   EventKillTimer();
+   g_refreshTimerStarted = false;
+   g_refreshInProgress = false;
+   g_timerLagLogged = false;
+   g_timerOverrunLogged = false;
+   g_lastTimerRunUs = 0;
+  }
+
+void RefreshTradeActionView(bool detectNewOpenActions, bool seedBaseline, bool redrawTable)
+  {
+   RefreshOpenTicketSnapshot(detectNewOpenActions);
+
+   if(seedBaseline)
+      SeedBaselineOpenActions();
+
+   if(redrawTable)
+      DrawTable();
+  }
+
+void RunTimerRefreshCycle()
+  {
+   if(g_refreshInProgress)
+      return;
+
+   ulong cycleStartUs = GetMicrosecondCount();
+   if(g_lastTimerRunUs != 0)
+     {
+      ulong observedIntervalUs = cycleStartUs - g_lastTimerRunUs;
+      if(observedIntervalUs > (ulong)g_refreshIntervalMs * 2000)
+        {
+         if(!g_timerLagLogged)
+           {
+            PrintFormat("TradeAction: timer cadence lagged to %.3f ms (target %d ms).",
+                        (double)observedIntervalUs / 1000.0,
+                        g_refreshIntervalMs);
+            g_timerLagLogged = true;
+           }
+        }
+      else
+         g_timerLagLogged = false;
+     }
+
+   g_refreshInProgress = true;
+   g_lastTimerRunUs = cycleStartUs;
+
+   RefreshTradeActionView(true, false, true);
+
+   ulong cycleDurationUs = GetMicrosecondCount() - cycleStartUs;
+   g_refreshInProgress = false;
+
+   if(cycleDurationUs > (ulong)g_refreshIntervalMs * 1000)
+     {
+      if(!g_timerOverrunLogged)
+        {
+         PrintFormat("TradeAction: timer refresh took %.3f ms (target %d ms).",
+                     (double)cycleDurationUs / 1000.0,
+                     g_refreshIntervalMs);
+         g_timerOverrunLogged = true;
+        }
+     }
+   else
+      g_timerOverrunLogged = false;
+  }
+
 //+------------------------------------------------------------------+
 //| Expert initialization function                                   |
 //+------------------------------------------------------------------+
 int OnInit()
   {
    ResetTradeActionStorage();
+   ResetOpenTicketSnapshotStorage();
    ResetPendingCloseStorage();
-   RefreshOpenTicketSnapshot(false);
-   SeedBaselineOpenActions();
-   DrawTable();
+   g_refreshIntervalMs = NormalizeRefreshIntervalMs(InpRefreshIntervalMs);
+   if(g_refreshIntervalMs != InpRefreshIntervalMs)
+      PrintFormat("TradeAction: normalized refresh interval from %d ms to %d ms.",
+                  InpRefreshIntervalMs,
+                  g_refreshIntervalMs);
+
+   RefreshTradeActionView(false, true, true);
+   if(!StartRefreshTimer())
+      return(INIT_FAILED);
+
    return(INIT_SUCCEEDED);
   }
 
@@ -181,6 +306,7 @@ int OnInit()
 //+------------------------------------------------------------------+
 void OnDeinit(const int reason)
   {
+   StopRefreshTimer();
    ResetTradeActionStorage();
    ResetOpenTicketSnapshotStorage();
    ResetPendingCloseStorage();
@@ -192,8 +318,11 @@ void OnDeinit(const int reason)
 //+------------------------------------------------------------------+
 void OnTick()
   {
-   RefreshOpenTicketSnapshot(true);
-   DrawTable();
+  }
+
+void OnTimer()
+  {
+   RunTimerRefreshCycle();
   }
 
 //+------------------------------------------------------------------+
