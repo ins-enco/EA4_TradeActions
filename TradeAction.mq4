@@ -13,10 +13,10 @@ input color InpTextColor            = clrWhite;
 input color InpTitleColor           = clrGold;
 input color InpEmptyTextColor       = clrSilver;
 input int   InpRefreshIntervalMs    = 200;
+input int   InpVisibleRows          = 10;
 
 // Table layout
 string TA_PREFIX         = "TA_";
-int    TA_MAX_ROWS       = 10;
 int    TA_RIGHT_MARGIN   = 14;
 int    TA_TOP_MARGIN     = 14;
 int    TA_PADDING_X      = 8;
@@ -26,6 +26,11 @@ int    TA_HEADER_HEIGHT  = 20;
 int    TA_ROW_HEIGHT     = 19;
 int    TA_FONT_SIZE      = 9;
 string TA_FONT_NAME      = "Tahoma";
+int    TA_VISIBLE_ROWS_DEFAULT = 10;
+int    TA_VISIBLE_ROWS_MIN     = 1;
+int    TA_VISIBLE_ROWS_MAX     = 50;
+int    TA_SCROLL_BUTTON_WIDTH  = 28;
+int    TA_SCROLL_BUTTON_GAP    = 4;
 
 // Column widths (pixels)
 int COL_COUNT                        = 11;
@@ -107,6 +112,8 @@ int      g_pendingCloseSnapshotCount = 0;
 TradeActionSymbolState g_tradeActionSymbolBaselines[];
 int      g_tradeActionSymbolBaselineCount = 0;
 int      g_refreshIntervalMs = 0;
+int      g_visibleRows = 0;
+int      g_tableScrollOffset = 0;
 bool     g_refreshTimerStarted = false;
 bool     g_refreshInProgress = false;
 bool     g_timerLagLogged = false;
@@ -116,17 +123,28 @@ string   g_lastTableRenderState = "";
 bool     g_hasRenderedTable = false;
 
 int    NormalizeRefreshIntervalMs(int requestedIntervalMs);
+int    NormalizeVisibleRows(int requestedVisibleRows);
 int    GetTableChartWidth();
+int    GetTableChartHeight();
+int    GetTableVisibleRows();
+int    GetTableScrollOffsetMax();
+int    GetTableWindowStartIndex();
+void   ClampTableScrollOffset();
+bool   TableHasHiddenRows();
+string GetTableViewportStatusText(int displayedRows);
 void   ClearMeasuredTimestamp(TradeActionRow &action);
 void   SetMeasuredTimestampNow(TradeActionRow &action);
 long   GetTradeActionSequenceTimeMs(const TradeActionRow &action);
 string BuildTableRenderState();
 void   ResetTableRenderState();
+void   RedrawTableNow();
 bool   StartRefreshTimer();
 void   StopRefreshTimer();
 void   RefreshTradeActionView(bool detectNewOpenActions, bool seedBaseline, bool redrawTable);
 void   RunTimerRefreshCycle();
 void   DrawTable();
+void   ScrollTableBy(int deltaRows);
+void   ScrollTableToBoundary(bool toOldest);
 string ResolveTradeDirection(int ticketType, bool isCloseAction);
 string ResolveTicketDirection(int ticketType);
 void   ResetTradeActionStorage();
@@ -177,6 +195,7 @@ string FormatProfitSinceStart(const TradeActionRow &action);
 void   ClearTable();
 void   CreateRectangle(string name, int x, int y, int width, int height, color bgColor, color borderColor, int borderWidth = 1);
 void   CreateTableLabel(string name, string text, int x, int y, color textColor, int fontSize, ENUM_ANCHOR_POINT anchor);
+void   CreateTableButton(string name, string text, int x, int y, int width, int height, bool enabled);
 int    GetColumnWidth(int columnIndex);
 string GetColumnTitle(int columnIndex);
 int    GetContentWidth();
@@ -209,6 +228,21 @@ int NormalizeRefreshIntervalMs(int requestedIntervalMs)
    return(intervalMs);
   }
 
+int NormalizeVisibleRows(int requestedVisibleRows)
+  {
+   int visibleRows = requestedVisibleRows;
+   if(visibleRows <= 0)
+      visibleRows = TA_VISIBLE_ROWS_DEFAULT;
+
+   if(visibleRows < TA_VISIBLE_ROWS_MIN)
+      visibleRows = TA_VISIBLE_ROWS_MIN;
+
+   if(visibleRows > TA_VISIBLE_ROWS_MAX)
+      visibleRows = TA_VISIBLE_ROWS_MAX;
+
+   return(visibleRows);
+  }
+
 int GetTableChartWidth()
   {
    int chartWidth = (int)ChartGetInteger(0, CHART_WIDTH_IN_PIXELS, 0);
@@ -216,6 +250,78 @@ int GetTableChartWidth()
       chartWidth = 800;
 
    return(chartWidth);
+  }
+
+int GetTableChartHeight()
+  {
+   int chartHeight = (int)ChartGetInteger(0, CHART_HEIGHT_IN_PIXELS, 0);
+   if(chartHeight <= 0)
+      chartHeight = 600;
+
+   return(chartHeight);
+  }
+
+int GetTableVisibleRows()
+  {
+   int desiredRows = g_visibleRows;
+   if(desiredRows <= 0)
+      desiredRows = TA_VISIBLE_ROWS_DEFAULT;
+
+   int availableHeight = GetTableChartHeight() - TA_TOP_MARGIN - (TA_PADDING_Y * 2) - TA_TITLE_HEIGHT - TA_HEADER_HEIGHT - 12;
+   int maxRowsByChart = availableHeight / TA_ROW_HEIGHT;
+   if(maxRowsByChart < 1)
+      maxRowsByChart = 1;
+
+   if(desiredRows > maxRowsByChart)
+      return(maxRowsByChart);
+
+   return(desiredRows);
+  }
+
+int GetTableScrollOffsetMax()
+  {
+   int hiddenRows = g_tradeActionCount - GetTableVisibleRows();
+   if(hiddenRows < 0)
+      hiddenRows = 0;
+
+   return(hiddenRows);
+  }
+
+void ClampTableScrollOffset()
+  {
+   if(g_tableScrollOffset < 0)
+      g_tableScrollOffset = 0;
+
+   int maxOffset = GetTableScrollOffsetMax();
+   if(g_tableScrollOffset > maxOffset)
+      g_tableScrollOffset = maxOffset;
+  }
+
+int GetTableWindowStartIndex()
+  {
+   ClampTableScrollOffset();
+
+   int visibleRows = GetTableVisibleRows();
+   int startIndex = g_tradeActionCount - visibleRows - g_tableScrollOffset;
+   if(startIndex < 0)
+      startIndex = 0;
+
+   return(startIndex);
+  }
+
+bool TableHasHiddenRows()
+  {
+   return(g_tradeActionCount > GetTableVisibleRows());
+  }
+
+string GetTableViewportStatusText(int displayedRows)
+  {
+   if(g_tradeActionCount <= 0 || displayedRows <= 0)
+      return("0/0");
+
+   int startIndex = GetTableWindowStartIndex();
+   int endIndex = startIndex + displayedRows;
+   return(StringFormat("%d-%d/%d", startIndex + 1, endIndex, g_tradeActionCount));
   }
 
 void ClearMeasuredTimestamp(TradeActionRow &action)
@@ -246,14 +352,15 @@ long GetTradeActionSequenceTimeMs(const TradeActionRow &action)
 string BuildTableRenderState()
   {
    int chartWidth = GetTableChartWidth();
+   int chartHeight = GetTableChartHeight();
+   int visibleRows = GetTableVisibleRows();
+   ClampTableScrollOffset();
    int displayedRows = 0;
-   int startIndex = 0;
-   if(g_tradeActionCount > TA_MAX_ROWS)
-      startIndex = g_tradeActionCount - TA_MAX_ROWS;
+   int startIndex = GetTableWindowStartIndex();
 
-   string state = IntegerToString(chartWidth) + "|" + IntegerToString(startIndex) + "|" + IntegerToString(g_tradeActionCount);
+   string state = IntegerToString(chartWidth) + "|" + IntegerToString(chartHeight) + "|" + IntegerToString(visibleRows) + "|" + IntegerToString(g_tableScrollOffset) + "|" + IntegerToString(startIndex) + "|" + IntegerToString(g_tradeActionCount);
 
-   for(int actionIndex = startIndex; actionIndex < g_tradeActionCount && displayedRows < TA_MAX_ROWS; actionIndex++)
+   for(int actionIndex = startIndex; actionIndex < g_tradeActionCount && displayedRows < visibleRows; actionIndex++)
      {
       TradeActionRow action = g_tradeActions[actionIndex];
       state += "|" + IntegerToString(action.ticket);
@@ -280,6 +387,15 @@ void ResetTableRenderState()
   {
    g_lastTableRenderState = "";
    g_hasRenderedTable = false;
+  }
+
+void RedrawTableNow()
+  {
+   string renderState = BuildTableRenderState();
+   DrawTable();
+   g_lastTableRenderState = renderState;
+   g_hasRenderedTable = true;
+   ChartRedraw(0);
   }
 
 bool StartRefreshTimer()
@@ -388,10 +504,16 @@ int OnInit()
    ResetPendingCloseStorage();
    ResetTableRenderState();
    g_refreshIntervalMs = NormalizeRefreshIntervalMs(InpRefreshIntervalMs);
+   g_visibleRows = NormalizeVisibleRows(InpVisibleRows);
+   g_tableScrollOffset = 0;
    if(g_refreshIntervalMs != InpRefreshIntervalMs)
       PrintFormat("TradeAction: normalized refresh interval from %d ms to %d ms.",
                   InpRefreshIntervalMs,
                   g_refreshIntervalMs);
+   if(g_visibleRows != InpVisibleRows)
+      PrintFormat("TradeAction: normalized visible rows from %d to %d.",
+                  InpVisibleRows,
+                  g_visibleRows);
 
    RefreshTradeActionView(false, true, true);
    if(!StartRefreshTimer())
@@ -409,6 +531,7 @@ void OnDeinit(const int reason)
    ResetTradeActionStorage();
    ResetOpenTicketSnapshotStorage();
    ResetPendingCloseStorage();
+   g_tableScrollOffset = 0;
    ClearTable();
    ResetTableRenderState();
   }
@@ -425,57 +548,57 @@ void OnTimer()
    RunTimerRefreshCycle();
   }
 
+void OnChartEvent(const int id, const long &lparam, const double &dparam, const string &sparam)
+  {
+   if(id != CHARTEVENT_OBJECT_CLICK)
+      return;
+
+   if(sparam == "TA_ScrollOldest")
+     {
+      ScrollTableToBoundary(true);
+      return;
+     }
+
+   if(sparam == "TA_ScrollOlder")
+     {
+      ScrollTableBy(1);
+      return;
+     }
+
+   if(sparam == "TA_ScrollNewer")
+     {
+      ScrollTableBy(-1);
+      return;
+     }
+
+   if(sparam == "TA_ScrollNewest")
+      ScrollTableToBoundary(false);
+  }
+
 //+------------------------------------------------------------------+
 //| Draw TradeActions table                                          |
 //+------------------------------------------------------------------+
 void DrawTable()
   {
    ClearTable();
+   ClampTableScrollOffset();
 
-   // Collect rows from retained action log window.
-   // Display order is oldest->newest within the retained tail.
-   string rowOpenOrClose[10];
-   string rowDirection[10];
-   string rowExecutionPrice[10];
-   string rowExposure[10];
-   string rowMeasuredTimestamp[10];
-   string rowTicket[10];
-   string rowSymbolName[10];
-   string rowTicketDirection[10];
-   string rowMillisecondsSinceLastAction[10];
-   string rowPriceDifferenceFromPrevious[10];
-   string rowProfitSinceStart[10];
-
+   int visibleRows = GetTableVisibleRows();
    int displayedRows = 0;
-   int startIndex = 0;
-   if(g_tradeActionCount > TA_MAX_ROWS)
-      startIndex = g_tradeActionCount - TA_MAX_ROWS;
+   int startIndex = GetTableWindowStartIndex();
 
-   for(int actionIndex = startIndex; actionIndex < g_tradeActionCount && displayedRows < TA_MAX_ROWS; actionIndex++)
-     {
-      TradeActionRow action = g_tradeActions[actionIndex];
-      rowOpenOrClose[displayedRows] = action.openOrClose;
-      rowDirection[displayedRows] = action.tradeDirection;
-      rowExecutionPrice[displayedRows] = DoubleToString(action.executionPrice, Digits);
-      rowExposure[displayedRows] = DoubleToString(action.exposure, 2);
-      rowMeasuredTimestamp[displayedRows] = FormatMeasuredTimestamp(action);
-      rowTicket[displayedRows] = IntegerToString(action.ticket);
-      rowSymbolName[displayedRows] = action.symbolName;
-      rowTicketDirection[displayedRows] = action.ticketDirection;
-      rowMillisecondsSinceLastAction[displayedRows] = DoubleToString(action.millisecondsSinceLastAction, 0);
-      rowPriceDifferenceFromPrevious[displayedRows] = FormatPriceDifferenceFromPrevious(action);
-      rowProfitSinceStart[displayedRows] = FormatProfitSinceStart(action);
+   if(g_tradeActionCount > startIndex)
+      displayedRows = g_tradeActionCount - startIndex;
 
-      displayedRows++;
-     }
+   if(displayedRows > visibleRows)
+      displayedRows = visibleRows;
 
    bool noActions = (displayedRows == 0);
-   if(noActions)
-      displayedRows = 1;
+   int bodyRows = noActions ? 1 : displayedRows;
 
    int contentWidth = GetContentWidth();
    int panelWidth = contentWidth + (TA_PADDING_X * 2);
-   int panelHeight = (TA_PADDING_Y * 2) + TA_TITLE_HEIGHT + TA_HEADER_HEIGHT + (displayedRows * TA_ROW_HEIGHT);
+   int panelHeight = (TA_PADDING_Y * 2) + TA_TITLE_HEIGHT + TA_HEADER_HEIGHT + (bodyRows * TA_ROW_HEIGHT);
 
    int chartWidth = GetTableChartWidth();
 
@@ -494,7 +617,7 @@ void DrawTable()
 
    // Grid lines
    int gridTop = headerY;
-   int gridHeight = TA_HEADER_HEIGHT + (displayedRows * TA_ROW_HEIGHT);
+   int gridHeight = TA_HEADER_HEIGHT + (bodyRows * TA_ROW_HEIGHT);
    int splitX = panelLeft + TA_PADDING_X;
 
    for(int c = 0; c < COL_COUNT - 1; c++)
@@ -505,7 +628,7 @@ void DrawTable()
 
    CreateRectangle("TA_HLine_Header", panelLeft + TA_PADDING_X, bodyY, contentWidth, 1, InpGridColor, InpGridColor, 1);
 
-   for(int r = 1; r < displayedRows; r++)
+   for(int r = 1; r < bodyRows; r++)
      {
       int yLine = bodyY + (r * TA_ROW_HEIGHT);
       CreateRectangle("TA_HLine_Row_" + IntegerToString(r), panelLeft + TA_PADDING_X, yLine, contentWidth, 1, InpGridColor, InpGridColor, 1);
@@ -513,6 +636,26 @@ void DrawTable()
 
    // Title
    CreateTableLabel("TA_Title", "TradeActions", panelLeft + TA_PADDING_X + 2, titleY + 2, InpTitleColor, TA_FONT_SIZE + 1, ANCHOR_LEFT_UPPER);
+   string viewportText = GetTableViewportStatusText(displayedRows);
+   int titleRight = panelLeft + panelWidth - TA_PADDING_X - 4;
+   if(TableHasHiddenRows())
+     {
+      int buttonHeight = TA_TITLE_HEIGHT - 4;
+      int buttonsWidth = (TA_SCROLL_BUTTON_WIDTH * 4) + (TA_SCROLL_BUTTON_GAP * 3);
+      int buttonsLeft = titleRight - buttonsWidth + 1;
+      int maxOffset = GetTableScrollOffsetMax();
+      bool canScrollOlder = (g_tableScrollOffset < maxOffset);
+      bool canScrollNewer = (g_tableScrollOffset > 0);
+
+      CreateTableButton("TA_ScrollOldest", "<<", buttonsLeft, titleY + 2, TA_SCROLL_BUTTON_WIDTH, buttonHeight, canScrollOlder);
+      CreateTableButton("TA_ScrollOlder", "<", buttonsLeft + TA_SCROLL_BUTTON_WIDTH + TA_SCROLL_BUTTON_GAP, titleY + 2, TA_SCROLL_BUTTON_WIDTH, buttonHeight, canScrollOlder);
+      CreateTableButton("TA_ScrollNewer", ">", buttonsLeft + ((TA_SCROLL_BUTTON_WIDTH + TA_SCROLL_BUTTON_GAP) * 2), titleY + 2, TA_SCROLL_BUTTON_WIDTH, buttonHeight, canScrollNewer);
+      CreateTableButton("TA_ScrollNewest", ">>", buttonsLeft + ((TA_SCROLL_BUTTON_WIDTH + TA_SCROLL_BUTTON_GAP) * 3), titleY + 2, TA_SCROLL_BUTTON_WIDTH, buttonHeight, canScrollNewer);
+
+      CreateTableLabel("TA_ViewStatus", viewportText, buttonsLeft - 6, titleY + 3, InpEmptyTextColor, TA_FONT_SIZE, ANCHOR_RIGHT_UPPER);
+     }
+   else
+      CreateTableLabel("TA_ViewStatus", viewportText, titleRight, titleY + 3, InpEmptyTextColor, TA_FONT_SIZE, ANCHOR_RIGHT_UPPER);
 
    // Header text
    for(int column = 0; column < COL_COUNT; column++)
@@ -530,22 +673,23 @@ void DrawTable()
 
    for(int row = 0; row < displayedRows; row++)
      {
+      TradeActionRow action = g_tradeActions[startIndex + row];
       int rowY = bodyY + (row * TA_ROW_HEIGHT);
 
       for(int col = 0; col < COL_COUNT; col++)
         {
          string text = GetCellValue(col,
-                             rowOpenOrClose[row],
-                             rowDirection[row],
-                             rowExecutionPrice[row],
-                             rowExposure[row],
-                             rowMeasuredTimestamp[row],
-                             rowTicket[row],
-                             rowSymbolName[row],
-                             rowTicketDirection[row],
-                             rowMillisecondsSinceLastAction[row],
-                             rowPriceDifferenceFromPrevious[row],
-                             rowProfitSinceStart[row]);
+                             action.openOrClose,
+                             action.tradeDirection,
+                             DoubleToString(action.executionPrice, Digits),
+                             DoubleToString(action.exposure, 2),
+                             FormatMeasuredTimestamp(action),
+                             IntegerToString(action.ticket),
+                             action.symbolName,
+                             action.ticketDirection,
+                             DoubleToString(action.millisecondsSinceLastAction, 0),
+                             FormatPriceDifferenceFromPrevious(action),
+                             FormatProfitSinceStart(action));
          int colStart = GetColumnStartX(panelLeft, col);
          int colWidth = GetColumnWidth(col);
 
@@ -555,7 +699,32 @@ void DrawTable()
          else
             CreateTableLabel("TA_Cell_" + IntegerToString(row + 1) + "_" + IntegerToString(col + 1), text, colStart + 4, rowY + 3, InpTextColor, TA_FONT_SIZE, ANCHOR_LEFT_UPPER);
         }
-     }
+      }
+  }
+
+void ScrollTableBy(int deltaRows)
+  {
+   if(deltaRows == 0)
+      return;
+
+   int previousOffset = g_tableScrollOffset;
+   g_tableScrollOffset += deltaRows;
+   ClampTableScrollOffset();
+   if(previousOffset != g_tableScrollOffset)
+      RedrawTableNow();
+  }
+
+void ScrollTableToBoundary(bool toOldest)
+  {
+   int previousOffset = g_tableScrollOffset;
+   if(toOldest)
+      g_tableScrollOffset = GetTableScrollOffsetMax();
+   else
+      g_tableScrollOffset = 0;
+
+   ClampTableScrollOffset();
+   if(previousOffset != g_tableScrollOffset)
+      RedrawTableNow();
   }
 
 //+------------------------------------------------------------------+
@@ -1381,6 +1550,26 @@ void CreateTableLabel(string name, string text, int x, int y, color textColor, i
    ObjectSetInteger(0, name, OBJPROP_YDISTANCE, y);
    ObjectSetInteger(0, name, OBJPROP_COLOR, textColor);
    ObjectSetInteger(0, name, OBJPROP_FONTSIZE, fontSize);
+   ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+   ObjectSetInteger(0, name, OBJPROP_SELECTED, false);
+   ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);
+   ObjectSetString(0, name, OBJPROP_FONT, TA_FONT_NAME);
+   ObjectSetString(0, name, OBJPROP_TEXT, text);
+  }
+
+void CreateTableButton(string name, string text, int x, int y, int width, int height, bool enabled)
+  {
+   if(!ObjectCreate(0, name, OBJ_BUTTON, 0, 0, 0))
+      return;
+
+   ObjectSetInteger(0, name, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+   ObjectSetInteger(0, name, OBJPROP_XDISTANCE, x);
+   ObjectSetInteger(0, name, OBJPROP_YDISTANCE, y);
+   ObjectSetInteger(0, name, OBJPROP_XSIZE, width);
+   ObjectSetInteger(0, name, OBJPROP_YSIZE, height);
+   ObjectSetInteger(0, name, OBJPROP_COLOR, enabled ? InpTextColor : InpEmptyTextColor);
+   ObjectSetInteger(0, name, OBJPROP_BGCOLOR, enabled ? InpHeaderBackgroundColor : InpPanelBackgroundColor);
+   ObjectSetInteger(0, name, OBJPROP_STATE, false);
    ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
    ObjectSetInteger(0, name, OBJPROP_SELECTED, false);
    ObjectSetInteger(0, name, OBJPROP_HIDDEN, true);
