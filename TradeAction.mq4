@@ -47,8 +47,8 @@ int COL_W_PRICE_DIFF_FROM_PREVIOUS   = 170;
 int COL_W_PROFIT_SINCE_START         = 130;
 int TA_ACTION_LOG_RETENTION          = 200;
 
-string TA_ACTION_OPEN  = "open";
-string TA_ACTION_CLOSE = "close";
+string TA_ACTION_OPEN  = "Open";
+string TA_ACTION_CLOSE = "Close";
 int    TA_DERIVED_DECIMALS = 10;
 double TA_EXPOSURE_EPSILON = 0.000001;
 string TA_VALUE_NOT_AVAILABLE = "";
@@ -731,10 +731,10 @@ void ScrollTableToBoundary(bool toOldest)
 string ResolveTradeDirection(int ticketType, bool isCloseAction)
   {
    if(ticketType == OP_BUY)
-      return(isCloseAction ? "sell" : "buy");
+      return(isCloseAction ? "SELL" : "BUY");
 
    if(ticketType == OP_SELL)
-      return(isCloseAction ? "buy" : "sell");
+      return(isCloseAction ? "BUY" : "SELL");
 
    return("");
   }
@@ -1228,10 +1228,10 @@ double GetSignedQuantity(string tradeDirection, double lots)
    if(lots < 0.0)
       lots = -lots;
 
-   if(tradeDirection == "buy")
+   if(tradeDirection == "BUY")
       return(lots);
 
-   if(tradeDirection == "sell")
+   if(tradeDirection == "SELL")
       return(-lots);
 
    return(0.0);
@@ -1244,10 +1244,10 @@ double RoundTradeActionValue(double value)
 
 bool IsOppositeTradeDirection(string currentDirection, string previousDirection)
   {
-   if(currentDirection == "buy" && previousDirection == "sell")
+   if(currentDirection == "BUY" && previousDirection == "SELL")
       return(true);
 
-   if(currentDirection == "sell" && previousDirection == "buy")
+   if(currentDirection == "SELL" && previousDirection == "BUY")
       return(true);
 
    return(false);
@@ -1355,9 +1355,9 @@ void RecalculateTradeActionDerivedFieldsCore()
          IsOppositeTradeDirection(action.tradeDirection, state.tradeDirection))
         {
          double priceDifference = 0.0;
-         if(action.tradeDirection == "buy")
+         if(action.tradeDirection == "BUY")
             priceDifference = state.executionPrice - action.executionPrice;
-         else if(action.tradeDirection == "sell")
+         else if(action.tradeDirection == "SELL")
             priceDifference = action.executionPrice - state.executionPrice;
 
          action.hasPriceDifferenceFromPrevious = true;
@@ -1605,15 +1605,15 @@ string GetColumnTitle(int columnIndex)
    switch(columnIndex)
      {
       case 0: return("Ticket");
-      case 1: return("SymbolName");
+      case 1: return("Symbol");
       case 2: return("OpenOrClose");
       case 3: return("TradeDirection");
       case 4: return("TicketDirection");
       case 5: return("ExecutionPrice");
       case 6: return("Exposure");
       case 7: return("MeasuredTimestamp");
-      case 8: return("MillisecondsSinceLastAction");
-      case 9: return("PriceDifferenceFromPrevious");
+      case 8: return("Ms_LastAction");
+      case 9: return("Pricediff");
       case 10: return("ProfitSinceStart");
      }
    return("");
