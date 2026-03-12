@@ -7,6 +7,12 @@
   - open sell -> `OpenOrClose=open`, `TradeDirection=sell`
   - close buy -> `OpenOrClose=close`, `TradeDirection=sell`
   - close sell -> `OpenOrClose=close`, `TradeDirection=buy`
+- Xac nhan row order tren table follow contract sort muc tieu:
+  - primary key = broker `actionTime` (`OrderOpenTime` cho open, `OrderCloseTime` cho close)
+  - neu cung `actionTime`: `open` dung truoc `close`
+  - neu van bang nhau: `ticket` nho hon dung truoc
+  - khong group theo `Symbol Name`
+  - khong doi thu tu theo `MeasuredTimestamp`
 - Xac nhan cac cot `Ticket`, `Symbol Name`, `ExecutionPrice`, `Profit` khop voi Terminal (`Trade`/`Account History`).
 - Xac nhan cot `MeasuredTimestamp`:
   - nam sau `Exposure` va truoc `MillisecondsSinceLastAction`
@@ -21,22 +27,25 @@
 
 ## Pre-check tu dong (CLI)
 
-- Date: `2026-03-11`
+- Date: `2026-03-12`
 - Build command:
   - `metaeditor.exe /compile:.../TradeAction.mq4 /log:.../metaeditor-mt4-compile.log`
 - Build result:
-  - `Result: 0 errors, 0 warnings`
+  - `Result: 0 errors, 0 warnings, 84 msec elapsed`
 - Build artifact:
-  - `TradeAction.ex4` timestamp `2026-03-11 14:19:11`
+  - `TradeAction.ex4` timestamp `2026-03-12 11:29:18`
 
 ## Sprint 3 status
 
 - CLI/source validation:
   - `PASS`
   - Xem them `docs/testing/sprint-3-validation-report.md`
+- Runtime evidence on current build:
+  - `PARTIAL`
+  - Build `TradeAction.ex4` timestamp `2026-03-12 11:29:18` da duoc deploy vao terminal active, nhung `20260312.log` hien chi co `loaded successfully` va dump inputs; chua co event trade/timer moi de dong scenario.
 - Manual MT4 execution:
   - `PENDING`
-  - Chua co bang chung trade tay tren build moi sau khi compile luc `2026-03-11 14:19:11`
+  - Chua co bang chung trade tay tren build moi sau khi compile luc `2026-03-12 11:29:18`
 
 ## Cau hinh test thu cong
 
@@ -52,6 +61,9 @@
 - Ghi `local-now` khi chi can xac nhan `MeasuredTimestamp` theo format local time, khong can trung tung mili-giay mau.
 - Ghi `>0` neu chi can xac nhan milliseconds duong, khong can dung gia tri tuyet doi.
 - Neu test bang gia thuc te khong dat dung gia mau, thay gia tri cu the vao cong thuc cung hang va doi chieu ket qua theo cong thuc, khong doi theo con so mau.
+- Khi doi chieu thu tu row, uu tien timestamp broker tu `Trade`/`Account History`; khong doi theo `MeasuredTimestamp`.
+- Neu hai action cung hien cung `yyyy.MM.dd HH:mm:ss` tren MT4 thi coi `actionTimeMs` bang nhau va doi chieu tie-break theo `open -> close -> ticket`.
+- EA hien tai dang thu thap account-wide action cho tat ca symbol trackable, nen ordering test co the dung nhieu symbol trong cung mot table.
 
 ## Measured timestamp checks bo sung
 
@@ -60,6 +72,15 @@
 | M0 | Mo 1 lenh BUY `0.10`, sau do attach EA | Lenh da mo truoc khi attach | Row seed `open`, `buy`, `Ticket Direction=BUY` | de trong | `0` | Pending |
 | M1 | Dong lenh BUY cua M0 sau khi attach | Row truoc do la baseline co `MeasuredTimestamp` de trong | `close`, `sell`, `Ticket Direction=BUY` | `local-now` | `0` | Pending |
 | M2 | Sau M1, mo 1 lenh SELL moi `0.10` | Row truoc do da co `MeasuredTimestamp` | `open`, `sell`, `Ticket Direction=SELL` | `local-now` | `>0` | Pending |
+
+## Ordering checks bo sung
+
+| ID | Chuoi thao tac | Dieu kien truoc do | Quan he broker time ky vong | Thu tu row ky vong | Ket qua thuc te |
+|---|---|---|---|---|---|
+| O1 | Mo 1 lenh `EURUSD`, cho `1-2` giay, mo 1 lenh `GBPUSD`, cho `1-2` giay, dong lenh `EURUSD` dau tien | EA dang track account-wide action, co it nhat 2 symbol trade duoc | `EURUSD open < GBPUSD open < EURUSD close` | Table phai hien `EURUSD open` truoc, roi `GBPUSD open`, roi `EURUSD close` | Pending |
+| O2 | Mo va dong nhanh cung 1 ticket trong cung mot broker-second | MT4 cho thay `OrderOpenTime` va `OrderCloseTime` cung `yyyy.MM.dd HH:mm:ss` | `openTime == closeTime` | Row `open` cua ticket do phai dung truoc row `close` cua cung ticket, du `MeasuredTimestamp` co the khac | Pending |
+| O3 | Tao 2 action cung loai trong cung broker-second tren 2 ticket khac nhau | Hai action co cung `actionTime`, cung `open` hoac cung `close` | `actionTime` bang nhau, `openOrClose` bang nhau | Ticket nho hon phai dung truoc; `Symbol Name` khong duoc thay doi tie-break nay | Pending |
+| O4 | Dong 1 lenh de close row bi queue pending, trong luc cho history thi tao them 1 action moi co broker time lon hon | Co it nhat `1` chu ky timer log `queued pending close action(s)` truoc khi `resolved` | close row duoc append muon nhung `closeTime` som hon action moi | Sau khi history co, close row phai chen vao vi tri theo `actionTime`, khong duoc nam cuoi chi vi append sau | Pending |
 
 ## Scenario Matrix
 
@@ -114,6 +135,7 @@ Danh dau `PASS/FAIL` sau khi chay toi thieu S1-S6 va doi chieu them voi Example 
 | MillisecondsSinceLastAction | `0` neu row hien tai hoac row truoc do cua symbol khong co `MeasuredTimestamp`; nguoc lai = chenh lech giua 2 `MeasuredTimestamp` | Pending | |
 | PriceDifferenceFromPrevious | `N/A` neu khong du dieu kien; chi tinh khi `previousExposure != 0` va direction dao chieu | Pending | |
 | ProfitSinceStart | Mac dinh giu `previousProfit`; chi cong them `PriceDifferenceFromPrevious` khi cot nay co gia tri | Pending | |
+| Row ordering | Tang dan theo broker `actionTime`; neu bang nhau thi `open -> close -> ticket`; khong group theo symbol va khong doi theo `MeasuredTimestamp` | Pending | |
 
 ## Experts log check
 
@@ -130,4 +152,4 @@ Ket qua:
 
 - Trang thai hien tai: `CLI/source validation done, waiting for manual MT4 execution`.
 - Da co validation report cho build moi o `docs/testing/sprint-3-validation-report.md`.
-- Can ban chay tay M0-M2 va S1-S6 trong MT4 sau khi reload build `TradeAction.ex4` timestamp `2026-03-11 14:19:11` de dong dau `PASS/FAIL`.
+- Can ban chay tay M0-M2, S1-S6, va O1-O4 trong MT4 sau khi reload build `TradeAction.ex4` timestamp `2026-03-12 11:29:18` de dong dau `PASS/FAIL`.

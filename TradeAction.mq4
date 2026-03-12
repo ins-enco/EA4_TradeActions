@@ -134,7 +134,7 @@ bool   TableHasHiddenRows();
 string GetTableViewportStatusText(int displayedRows);
 void   ClearMeasuredTimestamp(TradeActionRow &action);
 void   SetMeasuredTimestampNow(TradeActionRow &action);
-long   GetTradeActionSequenceTimeMs(const TradeActionRow &action);
+long   GetTradeActionSortTimeMs(const TradeActionRow &action);
 string BuildTableRenderState();
 void   ResetTableRenderState();
 void   RedrawTableNow();
@@ -341,11 +341,9 @@ void SetMeasuredTimestampNow(TradeActionRow &action)
    action.measuredTimestampMs = ((long)localTime * 1000) + millisecondsPart;
   }
 
-long GetTradeActionSequenceTimeMs(const TradeActionRow &action)
+long GetTradeActionSortTimeMs(const TradeActionRow &action)
   {
-   if(action.hasMeasuredTimestamp)
-      return(action.measuredTimestampMs);
-
+   // Keep table ordering on broker event time; measured timestamps remain display-only.
    return(action.actionTimeMs);
   }
 
@@ -1141,7 +1139,7 @@ void SortOpenTicketSnapshotByTime(OpenTicketSnapshot &snapshot[], int count)
 void SortTradeActionsByTime()
   {
    // Deterministic chronological order:
-   // 1) older measured timestamp first when available, otherwise older actionTimeMs
+   // 1) older broker actionTimeMs first
    // 2) for same timestamp: open before close
    // 3) then lower ticket first
    for(int i = 1; i < g_tradeActionCount; i++)
@@ -1151,10 +1149,10 @@ void SortTradeActionsByTime()
 
       while(j >= 0)
         {
-         long currentSequenceTimeMs = GetTradeActionSequenceTimeMs(g_tradeActions[j]);
-         long keySequenceTimeMs = GetTradeActionSequenceTimeMs(key);
-         bool shouldShift = (currentSequenceTimeMs > keySequenceTimeMs);
-         if(currentSequenceTimeMs == keySequenceTimeMs)
+         long currentSortTimeMs = GetTradeActionSortTimeMs(g_tradeActions[j]);
+         long keySortTimeMs = GetTradeActionSortTimeMs(key);
+         bool shouldShift = (currentSortTimeMs > keySortTimeMs);
+         if(currentSortTimeMs == keySortTimeMs)
            {
             bool currentIsClose = (g_tradeActions[j].openOrClose == TA_ACTION_CLOSE);
             bool keyIsClose = (key.openOrClose == TA_ACTION_CLOSE);

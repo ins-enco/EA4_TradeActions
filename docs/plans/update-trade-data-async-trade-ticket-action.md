@@ -122,6 +122,26 @@ Each `TradeTicketAction` record is mapped as:
 
 After building the record, `lastActionDataPerSymbol[symbol]` is immediately updated with new timestamp, price, action direction, exposure, and cumulative profit.
 
+## 4.1) Deterministic ordering contract for merged action logs
+
+For consumers that render one merged action log across symbols and tickets, the ordering contract should be based on broker event time, not on measured record-creation time.
+
+- Primary key:
+  - `TicketTimestamp` ascending
+  - For MT4 table parity work, this maps to broker `actionTimeMs`
+- Tie-break 1:
+  - `Open` before `Close`
+- Tie-break 2:
+  - lower `TicketID` before higher `TicketID`
+- No grouping:
+  - `SymbolName` does not participate in ordering
+- `MeasuredTimestamp` role:
+  - keep for diagnostics / UI display
+  - keep as the source for elapsed-time fields such as `MillisecondsSinceLastAction`
+  - do not use as the ordering key
+
+If a close action is materialized later because history arrives after the initial detection pass, the row may be appended later in memory but should settle into the position dictated by `TicketTimestamp` after sorting.
+
 ## 5) Persistence Path
 
 At end of loop in `UpdateTradeDataAsync`:
