@@ -3,6 +3,11 @@
 //|                           TradeActions demo table (open orders)  |
 //+------------------------------------------------------------------+
 #property strict
+#property version   "1.01"
+#property description "TradeAction displays a TradeActions table on the chart."
+#property description "It tracks open and close actions across account symbols."
+#property description "The table refreshes on a millisecond timer."
+#property description "For the MT4 smiley icon, enable AutoTrading and Allow live trading."
 
 // Visual inputs
 input color InpPanelBackgroundColor = C'20,20,20';
@@ -42,8 +47,8 @@ int COL_W_MEASURED_TIMESTAMP         = 170;
 int COL_W_TICKET                     = 90;
 int COL_W_SYMBOL_NAME                = 90;
 int COL_W_TICKET_DIRECTION           = 110;
-int COL_W_MILLISECONDS_SINCE_LAST    = 100;
-int COL_W_PRICE_DIFF_FROM_PREVIOUS   = 100;
+int COL_W_MILLISECONDS_SINCE_LAST    = 110;
+int COL_W_PRICE_DIFF_FROM_PREVIOUS   = 110;
 int COL_W_PROFIT_SINCE_START         = 100;
 int TA_ACTION_LOG_RETENTION          = 1000;
 
@@ -189,6 +194,7 @@ bool   HasOpenActionForTicket(int ticket);
 bool   HasCloseActionForTicket(int ticket);
 double GetOpenTicketFloatingProfit(int ticket);
 void   SeedBaselineOpenActions();
+string FormatLocalTimestampWithMilliseconds(datetime localTime, int millisecondsPart);
 string FormatMeasuredTimestamp(const TradeActionRow &action);
 string FormatPriceDifferenceFromPrevious(const TradeActionRow &action);
 string FormatProfitSinceStart(const TradeActionRow &action);
@@ -1099,11 +1105,15 @@ void RefreshOpenTicketSnapshot(bool detectNewOpenActions)
 
    RecalculateTradeActionDerivedFields();
 
+   datetime currentLocalTime = TimeLocal();
+   int currentMillisecondsPart = (int)(GetTickCount() % 1000);
+   string currentLocalTimeText = FormatLocalTimestampWithMilliseconds(currentLocalTime, currentMillisecondsPart);
+
    if(appendedOpenCount > 0)
-      PrintFormat("TradeAction: detected %d new open action(s).", appendedOpenCount);
+      PrintFormat("TradeAction: detected %d new open action(s). TimeLocal=%s", appendedOpenCount, currentLocalTimeText);
 
    if(appendedCloseCount > 0)
-      PrintFormat("TradeAction: detected %d close action(s) from snapshot diff.", appendedCloseCount);
+      PrintFormat("TradeAction: detected %d close action(s) from snapshot diff. TimeLocal=%s", appendedCloseCount, currentLocalTimeText);
 
    if(resolvedPendingCount > 0)
       PrintFormat("TradeAction: resolved %d pending close action(s).", resolvedPendingCount);
@@ -1477,8 +1487,13 @@ string FormatMeasuredTimestamp(const TradeActionRow &action)
       return(TA_VALUE_NOT_AVAILABLE);
 
    int millisecondsPart = (int)(action.measuredTimestampMs % 1000);
+   return(FormatLocalTimestampWithMilliseconds(action.measuredTimestampLocal, millisecondsPart));
+  }
+
+string FormatLocalTimestampWithMilliseconds(datetime localTime, int millisecondsPart)
+  {
    return(StringFormat("%s.%03d",
-                       TimeToString(action.measuredTimestampLocal, TIME_DATE | TIME_SECONDS),
+                       TimeToString(localTime, TIME_DATE | TIME_SECONDS),
                        millisecondsPart));
   }
 
@@ -1612,8 +1627,8 @@ string GetColumnTitle(int columnIndex)
       case 5: return("ExecutionPrice");
       case 6: return("Exposure");
       case 7: return("MeasuredTimestamp");
-      case 8: return("Ms_LastAction");
-      case 9: return("Pricediff");
+      case 8: return("MsSinceLastAct.");
+      case 9: return("PriceDiffFromPrev");
       case 10: return("ProfitSinceStart");
      }
    return("");
