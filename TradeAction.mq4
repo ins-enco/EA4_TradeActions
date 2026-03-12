@@ -40,11 +40,11 @@ int COL_W_EXEC_PRICE                 = 95;
 int COL_W_EXPOSURE                   = 80;
 int COL_W_MEASURED_TIMESTAMP         = 170;
 int COL_W_TICKET                     = 90;
-int COL_W_SYMBOL_NAME                = 95;
+int COL_W_SYMBOL_NAME                = 90;
 int COL_W_TICKET_DIRECTION           = 110;
-int COL_W_MILLISECONDS_SINCE_LAST    = 160;
-int COL_W_PRICE_DIFF_FROM_PREVIOUS   = 170;
-int COL_W_PROFIT_SINCE_START         = 130;
+int COL_W_MILLISECONDS_SINCE_LAST    = 100;
+int COL_W_PRICE_DIFF_FROM_PREVIOUS   = 100;
+int COL_W_PROFIT_SINCE_START         = 100;
 int TA_ACTION_LOG_RETENTION          = 200;
 
 string TA_ACTION_OPEN  = "Open";
