@@ -19,7 +19,7 @@ jobs:
 
     defaults:
       run:
-        shell: pwsh
+        shell: powershell
 
     env:
       SOURCE_FILE: TradeAction.mq4
