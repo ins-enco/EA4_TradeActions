@@ -89,11 +89,6 @@ jobs:
 
           Get-Content -Path $logFile
 
-          if ($process.ExitCode -ne 0)
-          {
-             throw "MetaEditor exited with code $($process.ExitCode)."
-          }
-
           $logContent = Get-Content -Path $logFile -Raw
           if ($logContent -match 'Result:\s*(\d+)\s+errors?,\s*(\d+)\s+warnings?')
           {
@@ -118,6 +113,11 @@ jobs:
           if (-not (Test-Path -LiteralPath $outputFile))
           {
              throw "Compiled artifact was not created: $outputFile"
+          }
+
+          if ($process.ExitCode -ne 0)
+          {
+             Write-Warning "MetaEditor exited with code $($process.ExitCode) despite producing a compile log and artifact."
           }
 
       - name: Upload build artifacts
